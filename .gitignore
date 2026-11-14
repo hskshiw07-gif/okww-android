@@ -1,0 +1,21 @@
+.gradle/
+.android-tools/
+**/build/
+/dist/
+/tmp/
+/local.properties
+/.idea/
+*.iml
+*.apk
+*.apk.sha256
+*.jks
+*.keystore
+*.log
+*.jsonl
+/evidence/
+
+# Local development notes and hardware-specific audit evidence are not release docs.
+/AGENTS.md
+/COLLABORATION.md
+/tools/
+/docs/

@@ -1,0 +1,24 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'io.github.okww.weekly'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'io.github.okww.weekly'
+        minSdk 28
+        targetSdk 35
+        versionCode 89
+        versionName '0.4.0-dev82'
+        testInstrumentationRunner 'io.github.okww.weekly.GardenFixtureRunner'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    sourceSets.test.resources.srcDir 'src/main/assets'
+}
+
+dependencies {
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    testImplementation 'junit:junit:4.13.2'
+}

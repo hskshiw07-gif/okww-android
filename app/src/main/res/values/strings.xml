@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">鸣潮周常·幻梦游园</string>
+    <string name="accessibility_description">仅在你主动启动后识别并操作前台鸣潮。幻梦游园达到6000游历值后停止；每日无音区按确认的账号预算消耗波片，允许备用补差，不使用星声或结晶溶剂；兑换任务按你启用的兑换码执行。浮窗“停”随时中止。</string>
+</resources>

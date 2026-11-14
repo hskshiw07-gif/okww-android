@@ -1,0 +1,27 @@
+# Original PC AST quick paths only; mocked helpers, not complete-axis or phone parity.
+# Chisa sha256=b292bb1a6ada69bc29df61ce8f75306d068c5b8358b21cd424552720bb74091d
+Chisa	0	E:0,S
+Chisa	1	N:2000:100:0,E:0,S
+Chisa	2	E:0,S
+Chisa	3	N:2000:100:0,E:0,S
+# Galbrena sha256=fc7aba89e26bd4550d155da6592bb4e99ee779ade1f95033630631ff5ae0949a
+Galbrena	0	E:0,N:1000:100:0,R:1:0,S
+Galbrena	1	down,P:1000,P:440,up,dodge:600,E:0,N:1000:100:0,R:1:0,S
+Galbrena	2	E:0,N:1000:100:0,R:1:0,S
+Galbrena	3	down,P:1000,up,S
+Galbrena	4	E:0,R:1:0,L:-1:0:100,N:1000:100:0,N:1000:100:0,R:1:0,S
+Galbrena	5	down,P:1000,P:440,up,dodge:600,E:0,R:1:0,L:-1:0:100,N:1000:100:0,N:1000:100:0,R:1:0,S
+Galbrena	6	E:0,N:1000:100:0,R:1:0,S
+Galbrena	7	down,P:1000,up,S
+# Qingxiao sha256=51cfc8e55b0d3b753feb1294fc6c17eb79d986ca02ebc8b06d7af0edabd0f268
+Qingxiao	0	S
+Qingxiao	2	enhanced:1500:500,S
+# Phrolova sha256=700f01dd92c24bd45ac24b74791dbdcbff1c7d6a0a36f46a55d06edd76326b00
+Phrolova	0	L:-1:0:0,S
+Phrolova	1	N:1700:100:0,dodge:100,L:-1:0:0,S
+# Hsin sha256=25fa06aae7862293aa2f015d280435b845689df3a6167fe704330b9d218b2369
+Hsin	0	L:-1:0:0,S
+Hsin	1	L:-1:0:0,S
+# Hiyuki sha256=66fbe3804e12d37902546bacad4581b0283fd952b6c9d8605d9ca87a363e788e
+Hiyuki	0	S
+Hiyuki	1	N:1000:100:0,S

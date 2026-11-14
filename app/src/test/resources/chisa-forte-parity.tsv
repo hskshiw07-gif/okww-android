@@ -1,0 +1,4 @@
+# Actual PC perform_forte AST with mocked observations; not a phone test.
+# Chisa sha256=b292bb1a6ada69bc29df61ce8f75306d068c5b8358b21cd424552720bb74091d
+0	0	H:RESONANCE:1200
+1	1	H:RESONANCE:1200,H:ATTACK:3500
