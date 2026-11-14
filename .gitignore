@@ -14,7 +14,7 @@
 *.jsonl
 /evidence/
 
-# Local development notes and hardware-specific audit evidence are not release docs.
+# 本地开发记录和设备专项审计材料不属于公开发行文档。
 /AGENTS.md
 /COLLABORATION.md
 /tools/

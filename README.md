@@ -1,34 +1,34 @@
 # ok-ww Android
 
-An experimental Android companion for automating selected *Wuthering Waves* tasks. It uses Android screen capture, on-device text/image recognition, and the Android Accessibility service; it does not read or modify the game's files.
+一个用于自动化完成《鸣潮》部分任务的 Android 辅助应用。它通过 Android 屏幕捕获、设备端文字与图像识别，以及 Android 无障碍服务与界面交互；不会读取或修改游戏文件。
 
-This is an in-development source snapshot, not a stable release. Supported workflows and character combat routines are limited, and unit tests do not establish successful end-to-end behavior on every device. No APK is checked into this repository.
+本项目仍在开发中，不代表稳定版本。当前支持的流程和角色战斗方案有限；单元测试通过也不代表已在所有设备上完成端到端验证。本仓库不包含 APK。
 
-## Build
+## 构建
 
 - JDK 17
-- Android SDK platform 35
+- Android SDK Platform 35
 - Gradle 8.11.1
 
-Import this directory into Android Studio, or install the JDK, SDK, and Gradle in the project-local `.android-tools/` layout and run:
+可将本目录导入 Android Studio。也可以安装 JDK、SDK 和 Gradle，并使用项目本地 `.android-tools/` 目录布局，然后运行：
 
 ```powershell
 .\build.ps1
 .\build.ps1 -TestOnly
 ```
 
-The build script writes generated files and APKs under ignored local build/output directories. `-Fixtures` also packages the Android instrumentation test APK.
+构建脚本会将生成文件和 APK 写入本地构建/输出目录；这些目录已加入忽略规则。使用 `-Fixtures` 时还会打包 Android 仪器测试 APK。
 
-## Privacy and permissions
+## 隐私与权限
 
-- Screen capture and recognition run on the device. The application does not upload captured game frames or account identifiers.
-- Account plans and run records are stored in app-private storage. No personal account IDs or phone numbers are bundled as defaults.
-- Account-specific defaults from the development checkout were removed. Single-account daily uses the first Tacet Suppression entry; configure an account plan in the multi-account task if another entry is needed.
-- The app requests MediaProjection and Accessibility permissions because those are required for screen capture and UI input. Tasks run only after the user starts them.
-- The optional public redemption-code feed is fetched from the URL declared in `RedeemFeed.java` when requested by the user. There is no analytics or telemetry endpoint in this source tree.
+- 屏幕捕获和识别均在设备本地运行；应用不会上传游戏画面或账号标识。
+- 账号计划和运行记录保存在应用私有存储中；仓库不附带个人账号 ID 或手机号作为默认值。
+- 开发环境中的账号专属默认配置已移除。单账号每日任务默认选择列表中的第一项「无音区」；如需选择其他项目，请在多账号任务中配置账号计划。
+- 应用申请 MediaProjection（屏幕捕获）和无障碍权限，是因为屏幕读取与界面操作需要这些权限。只有用户主动启动后，任务才会运行。
+- 用户主动请求时，应用会从 `RedeemFeed.java` 中声明的地址获取可选的公开兑换码信息。本代码中没有分析或遥测服务地址。
 
-## Important
+## 重要说明
 
-This project is unofficial and is not affiliated with Kuro Games. Automated interaction may conflict with the game's terms or enforcement rules and may put an account at risk. Check the applicable terms before use.
+本项目为非官方项目，与库洛游戏（Kuro Games）无隶属关系。自动化操作可能与游戏条款或管理规则冲突，也可能导致账号风险；使用前请自行查阅适用条款。
 
-Original source code is licensed under [AGPL-3.0](LICENSE.txt). Game-derived templates and screenshots have separate rights; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+原创源代码采用 [GNU AGPL-3.0](LICENSE.txt) 许可。游戏素材模板和截图涉及独立的权利，不因源代码采用该许可证而自动获得再分发许可，详见[第三方声明](THIRD_PARTY_NOTICES.md)。
