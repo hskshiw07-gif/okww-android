@@ -165,7 +165,7 @@ public final class MainActivity extends Activity {
         LinearLayout task = card();
         task.addView(text(redeem?"礼包码迁移验证  /  REDEEM":selected == AutomationTask.GARDEN ? "周常任务  /  GARDEN" : "每日迁移验证  /  DAILY", 10, ACCENT, true)); space(task, 9);
         task.addView(text(redeem?selected.title:selected == AutomationTask.MULTI_DAILY ? "多账号 · 无音区每日" : selected == AutomationTask.GARDEN ? "幻梦游园 · 狂想" : "每日全流程 · 无音区与免费奖励", 22, TEXT, true));
-        TextView description = text(TestEnvironment.enabled(preferences())?(selected==AutomationTask.REDEEM?"测试环境 · 每次从头获取公开码 → 新合成测试码输入/提交 → 核验结果 → 检查邮件。\n测试记录与真实记录隔离；无效测试码不代表奖励。设置中可关闭测试环境，恢复正常流程。":"测试环境已开启，但此任务尚未适配测试重跑，自动执行会停止。\n请先在设置关闭测试环境；真实波片、领奖及待核验记录始终保留。")
+        TextView description = text(TestEnvironment.enabled(preferences())?(selected==AutomationTask.DAILY?TestEnvironment.DAILY_DESCRIPTION:selected==AutomationTask.REDEEM?"测试环境 · 每次从头获取公开码 → 新合成测试码输入/提交 → 核验结果 → 检查邮件。\n测试记录与真实记录隔离；无效测试码不代表奖励。设置中可关闭测试环境，恢复正常流程。":"测试环境已开启，但此任务尚未适配测试重跑，自动执行会停止。\n请先在设置关闭测试环境；真实波片、领奖及待核验记录始终保留。")
                 :redeem?"正常环境 · 仅兑换已主动启用的真实礼包码，已处理码按记录跳过，再检查邮件。\n不生成测试码，不重复提交待核验记录。":selected == AutomationTask.GARDEN
                 ? "自动选卡、处理奇遇、推进阶段与结算重试。\n核验周游历值 6000 后结束。"
                 : selected == AutomationTask.MULTI_DAILY ? "当前账号优先，其余按计划顺序；登录后复核 UID，每号重新识别队伍。\n按游戏日保存完成/待完成/失败记录；手机切号流程尚待真机验证。"
@@ -259,10 +259,10 @@ public final class MainActivity extends Activity {
             preparation.cancel();
             if(GameAccessibilityService.instance!=null)GameAccessibilityService.instance.stop("测试环境已切换，请重新确认开始");
             preferences().edit().putBoolean(TestEnvironment.KEY,checked).apply();refreshStatus();
-            toast(checked?"测试环境已开启：单号兑换每次从头测试；其它任务暂不自动执行":"测试环境已关闭：恢复正常记录与跳过逻辑");
+            toast(checked?"测试环境已开启：每日忽略活跃度继续副本；单号兑换从头测试":"测试环境已关闭：恢复正常记录与跳过逻辑");
         });
         testRow.addView(testToggle,new LinearLayout.LayoutParams(d(64),d(48)));development.addView(testRow);space(development,6);
-        development.addView(text("当前适配：单号兑换。每次重新抓取公开码，以新合成测试码从头走输入、提交、结果和邮件；不代表真实奖励。\n未适配任务停止自动执行。不会清空真实兑换、波片消耗、领奖或待核验记录；切换环境会停止当前任务。",11,MUTED,false));
+        development.addView(text("当前适配：每日、单号兑换。每日忽略活跃度继续副本，仍使用真实波片与原消耗账本，不补充、不兑换、不购买。单号兑换每次重新抓取公开码，用新合成测试码核验流程，不代表真实奖励。\n其它任务暂不支持。不会清空真实兑换、波片消耗、领奖或待核验记录；切换环境会停止当前任务。",11,MUTED,false));
         space(development,8);
         Button pasteProbe=button("复制粘贴测试码（不兑换）",false,()->{
             GameAccessibilityService service=GameAccessibilityService.instance;
@@ -412,7 +412,7 @@ public final class MainActivity extends Activity {
             GameAccessibilityService service = GameAccessibilityService.instance;
             if (service != null && service.isRunning()) { toast("已有任务运行，请先停止"); return; }
             new AlertDialog.Builder(this).setTitle("启动每日全流程")
-                    .setMessage("启动游戏 → 核验账号与队伍 → 无音区 → 活跃奖励 → 邮件 → 先约电台。\n\n" + AutomationTask.DAILY.confirmation)
+                    .setMessage("启动游戏 → 核验账号与队伍 → 无音区 → 活跃奖励 → 邮件 → 先约电台。\n\n" + (TestEnvironment.dailyReplay(preferences(),AutomationTask.DAILY)?TestEnvironment.DAILY_DESCRIPTION:AutomationTask.DAILY.confirmation))
                     .setPositiveButton("确认并开始", (dialog, which) -> {
                         if (selectedTask() != AutomationTask.DAILY || preferences().getBoolean("readOnly", true)) return;
                         preparation.confirmDaily(); beginPreparation();

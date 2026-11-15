@@ -15,8 +15,13 @@ final class DailyRules {
     DailyRules() { this(null); }
     DailyRules(DailyTacet tacet) { this(tacet,null); }
     DailyRules(DailyTacet tacet,AccountDailyConfig.Profile batchProfile) {
-        this.tacet=tacet;this.batchProfile=batchProfile;reservePreparation=new DailyReservePreparation(tacet);
+        this(tacet,batchProfile,false);
     }
+    DailyRules(DailyTacet tacet,AccountDailyConfig.Profile batchProfile,boolean ignoreActivity) {
+        this.tacet=tacet;this.batchProfile=batchProfile;this.ignoreActivity=ignoreActivity;
+        reservePreparation=new DailyReservePreparation(tacet);
+    }
+    private final boolean ignoreActivity;
     private final AccountDailyConfig.Profile batchProfile;
     private final DailyReservePreparation reservePreparation;
     private long resourceCapturedAt=-1,resourceNow=-1;
@@ -59,7 +64,7 @@ final class DailyRules {
     static boolean needsHudDetail(Screen s,boolean recovering) {
         return s.aspect>2.18f && s.aspect<2.26f && AccountDailyConfig.detectUid(s)!=null
                 && (recovering&&worldHud(s) || !worldHud(s)
-                && s.hasOne("(?i)(?:[Lliwvta]{1,2}[.]?|[.])?[0-9]{1,3}",.55f,.90f,.61f,.96f));
+                && s.hasOne("(?i)(?:[Lliwvuta]{1,2}[.]?|[.])?[0-9]{1,3}",.55f,.90f,.61f,.96f));
     }
     AccountDailyConfig.Profile accountProfile() { return accountProfile; }
     int targetTacetIndex() { return accountProfile != null ? accountProfile.tacetIndex : 1; }
@@ -223,6 +228,8 @@ final class DailyRules {
                     : Action.waitFor("daily-team", "正在读取编队名称，等待两个新鲜画面一致");
         }
         if (teamVerified && activity) {
+            if(ignoreActivity&&!rewards.started()&&tacet!=null&&!tacet.exhausted())
+                return new Action(Kind.TAP,"daily-guide-boss-tab","每日测试：忽略活跃度，进入素材获取继续无音区副本；仍核验普通波片额度",148f/2400,326f/1080);
             Integer points = activityPoints(screen);
             if (points == null)
                 return Action.waitFor("daily-guide-loading", "等待每日页面和当前活跃度载入，不把标题或100刻度当结果");
@@ -348,7 +355,7 @@ final class DailyRules {
         List<Text> list = new ArrayList<>();
         for (Text word : screen.words) {
             if (word.x() >= .80f && word.x() <= .96f && word.y() >= .20f && word.y() <= .88f
-                    && word.value.matches("前往|直[接按技]挑战")) {
+                    && word.value.matches("前往|直[接按技]挑战|接挑战")) {
                 list.add(word);
             }
         }

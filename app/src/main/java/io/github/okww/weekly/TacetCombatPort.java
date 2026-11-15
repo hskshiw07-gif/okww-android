@@ -15,8 +15,6 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         if(name==null)return "角色身份未知";
         return switch(name) {
             case "Phrolova" -> "弗洛洛长动作两态、强化普攻及消耗手机标记";
-            case "Hsin" -> "心重击一/二、解放一/二、强化共鸣手机标记";
-            case "Hiyuki" -> "绯雪重击/左右提示、长动作两态、强化普攻及消耗手机标记";
             case "Qingxiao" -> "清宵强化共鸣、重击一/二手机标记";
             default -> wired(name)?"":"未接入的内置角色";
         };
@@ -39,6 +37,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     private final MobileTreasureReader treasures;
     private final CombatTouchLayout layout=CombatTouchLayout.forXiaomi13Pro();
     private final CombatClock clock=new CombatClock();
+    private final CombatNormalAttack normalAttack=new CombatNormalAttack();
     private final CombatTeam team;
     private final BuiltinRotations rotations;
     private final EnumMap<TeamBuiltinRotation.Feature,Boolean> featureCache=new EnumMap<>(TeamBuiltinRotation.Feature.class);
@@ -52,6 +51,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     private String expected;
     private String confirmedOutro;
     private long lastDodge=-1,lastResonanceTap=-1;
+    private boolean lastResonancePrompt;
     private long liberationHoldStarted=-1;
     private boolean liberationHoldReady;
     private boolean held,holdDesired;
@@ -62,6 +62,8 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     static final long ARENA_LABEL_GRACE_MS=8000;
     private long lastArenaFrame=-1;
     private boolean combatFrame;
+    private static final long OBSERVATION_INTERVAL_MS=250;
+    private HiyukiHud.Phase hiyukiPhase=HiyukiHud.Phase.UNKNOWN;
 
     TacetCombatPort(GameAccessibilityService service,ScreenReader reader,DailyRules policy,List<String> names) throws Exception {
         this.service=service;this.reader=reader;this.policy=policy;this.names=names;
@@ -78,6 +80,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     }
     void round() throws Exception {
         try {
+            normalAttack.stop();
             expected=null;checkCombat();expected=names.get(identity.active);
             rotations.run(expected,this);
         } catch(Ended ended) {throw ended;}
@@ -93,18 +96,24 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     @Override public void refresh() throws Exception {
         if(Thread.currentThread().isInterrupted())throw new InterruptedException();
         if(realTimeMs()-battleStarted>6*60*1000)throw new IllegalStateException("单场战斗超过6分钟，停止并保存现场");
-        long captureStarted=realTimeMs();Bitmap frame=service.capture();capturedAt=realTimeMs();
+        long captureStarted=realTimeMs();Bitmap frame=service.capture(this::continueNormalAttack);capturedAt=realTimeMs();
+        java.util.concurrent.CompletableFuture<PortraitMatcher.Match[]> avatars=null;
         try {
-            ScreenReader.Snapshot snapshot=reader.combat(frame);long ocrEnded=realTimeMs();screen=GardenEngine.toScreen(snapshot,frame);
+            if(frame.getWidth()!=2400||frame.getHeight()!=1080)throw new IllegalStateException("战斗头像目前只标定了2400×1080布局");
+            int[] colors=new int[frame.getWidth()*frame.getHeight()];frame.getPixels(colors,0,frame.getWidth(),0,0,frame.getWidth(),frame.getHeight());
+            PortraitMatcher.Pixels currentPixels=new PortraitMatcher.Pixels(frame.getWidth(),frame.getHeight(),colors);
+            // OCR and portrait matching read the same immutable capture in parallel.
+            // Only this worker commits identity after both finish and freshness is checked.
+            avatars=identities.matchAsync(currentPixels);
+            ScreenReader.Snapshot snapshot=reader.combat(frame,this::continueNormalAttack);long ocrEnded=realTimeMs();screen=GardenEngine.toScreen(snapshot,frame);
             if(screen.automationPanelVisible())throw new IllegalStateException("战斗帧含浮窗，未发送输入");
             policy.observeUid(screen);
             if(screen.has("挑战成功|挑战失败|领取奖励|复苏|复活|补充波片|兑换波片"))throw new Ended();
             boolean postWorld=TacetTreasureNavigation.postWorld(screen);
             boolean arena=CombatHud.tacetActive(screen);
             boolean grace=!arena&&lastArenaFrame>=0&&capturedAt-lastArenaFrame<=ARENA_LABEL_GRACE_MS&&CombatHud.tacetContinued(screen);
-            MobileCombatReader.Observation observed=identities.read(frame,screen,capturedAt,!postWorld);identity=observed.state;
-            int[] colors=new int[frame.getWidth()*frame.getHeight()];frame.getPixels(colors,0,frame.getWidth(),0,0,frame.getWidth(),frame.getHeight());
-            pixels=new PortraitMatcher.Pixels(frame.getWidth(),frame.getHeight(),colors);
+            MobileCombatReader.Observation observed=identities.observe(avatars.get(),screen,capturedAt,!postWorld);identity=observed.state;
+            pixels=currentPixels;
             observedSnapshot=snapshot;observedRequestedAt=captureStarted;
             PortraitMatcher.Match marker=postWorld&&!grace&&identity!=null&&!policy.uidConflict()?treasures.find(pixels):null;
             if(marker!=null&&realTimeMs()-capturedAt<=1500&&capturedAt>lastTreasureFrame) {
@@ -119,11 +128,18 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
             } else {treasureFrames=0;lastTreasureFrame=-1;}
             hud=!policy.uidConflict() && identity!=null && (arena||grace) ? new CombatHud(pixels,screen,team.chars.get(identity.active).element):null;
             readAt=realTimeMs();if(readAt-capturedAt>1500){identity=null;hud=null;}
+            // Starting OCR is not a new verified observation; only a fully accepted result renews normal input.
+            if(hud!=null)normalAttack.observed(capturedAt);
+            HiyukiHud.Phase phase=hud!=null&&"Hiyuki".equals(names.get(identity.active))
+                    ?features.hiyuki.phase(pixels):HiyukiHud.Phase.UNKNOWN;
+            if(phase!=hiyukiPhase)android.util.Log.i("WWCombat","Hiyuki observed forte phase="+phase);
+            hiyukiPhase=phase;
             if(hud!=null&&arena)lastArenaFrame=capturedAt;
             combatFrame=hud!=null;
             if(hud!=null&&grace)android.util.Log.i("WWCombat","arena labels unread; HP-line continuation "+(capturedAt-lastArenaFrame)+"ms after full arena frame");
             clock.observe(capturedAt,hud==null,identity!=null);featureCache.clear();
-            if(clock.observationGap()||hud==null)team.forgetBuffTiming();
+            // Intro/liberation animations hide HUD and freeze the active clock; they do not erase outro buffs.
+            if(clock.observationGap()||policy.uidConflict())team.forgetBuffTiming();
             held=service.heldActive();
             if (hud != null) {
                 if(holdDesired&&heldControl==LIBERATION&&hud.skills.get(LIBERATION)==CombatHud.Skill.READY)
@@ -132,7 +148,10 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
                 if (holdDesired && !held && expected != null && expected.equals(names.get(identity.active))) {
                     service.holdControl(heldControl,true,layout);held=true;
                 }
-            } else if (held) { android.util.Log.i("WWTouch","suspend hold: HUD/identity lost");service.holdAttack(false,layout);held=false; }
+            } else {
+                normalAttack.stop();
+                if(held){android.util.Log.i("WWTouch","suspend hold: HUD/identity lost");service.holdAttack(false,layout);held=false;}
+            }
             GardenRules.Action action=GardenRules.Action.waitFor("daily-tacet-combat",hud==null?"等待战斗HUD/在场身份恢复":
                     names.get(identity.active)+" "+hud.skills+"，协奏="+hud.concertoFull+"，回路="+hud.forteFull);
             org.json.JSONObject state=GardenEngine.persist(service,AutomationTask.DAILY,snapshot,action,true,readAt-capturedAt,names,
@@ -141,20 +160,38 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
             GardenEngine.writeState(service,AutomationTask.DAILY.stateFile,state);
             android.util.Log.d("WWCombatTiming","capture="+(capturedAt-captureStarted)+" ocr="+(ocrEnded-capturedAt)
                     +" identity="+(readAt-ocrEnded)+" persist="+(realTimeMs()-readAt));
-        } finally {frame.recycle();}
+        } finally {if(avatars!=null)avatars.cancel(true);frame.recycle();}
     }
     @Override public void checkCombat() throws Exception {
-        long end=realTimeMs()+5000;
+        long end=realTimeMs()+5000;int fallenCandidate=-1;
         while(true) {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException();
-            if(readAt<0||realTimeMs()-readAt>200||realTimeMs()-capturedAt>1200)refresh();
+            if(readAt<0||realTimeMs()-readAt>OBSERVATION_INTERVAL_MS||realTimeMs()-capturedAt>1200)refresh();
             if(hud!=null&&combatFrame) {
-                if(expected!=null&&!expected.equals(names.get(identity.active)))throw new IllegalStateException("战斗在场身份发生未确认变化，停止而非按旧角色输出");
+                if(expected!=null&&!expected.equals(names.get(identity.active))){
+                    boolean dead=expectedDead();
+                    if(dead&&fallenCandidate==identity.active){
+                            policy.tacet.confirmedPartyDeath(AccountDailyConfig.detectUid(screen));
+                            android.util.Log.i("WWCombat","confirmed fallen "+expected+"; handing off to exit/heal recovery");
+                            throw new Ended();
+                    }
+                    fallenCandidate=dead?identity.active:-1;
+                    android.util.Log.d("WWCombat","unexpected switch expected="+expected+" active="+names.get(identity.active)+" emptyBar="+dead);
+                    // The incoming portrait settles before the fallen member's HP bar.
+                    if(realTimeMs()<end){Thread.sleep(60);refresh();continue;}
+                    throw new IllegalStateException("战斗在场身份发生未确认变化，停止而非按旧角色输出");
+                }
                 return;
             }
             if(realTimeMs()>end)throw new IllegalStateException("无音区战斗状态或在场角色连续5秒未确认");
             Thread.sleep(60);refresh();
         }
+    }
+    private boolean expectedDead(){
+        if(identity==null||expected==null)return false;
+        for(int slot=0;slot<identity.standby.length;slot++)
+            if(expected.equals(names.get(identity.standby[slot])))return PartyHealth.deadStandby(pixels,slot);
+        return false;
     }
     @Override public boolean available(CombatTouchLayout.Control control) throws Exception {
         checkCombat();CombatHud.Skill state=hud.skills.get(control);
@@ -162,32 +199,60 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         return state==CombatHud.Skill.READY;
     }
     @Override public boolean cast(CombatTouchLayout.Control control) throws Exception {
+        return cast(control,false);
+    }
+    private boolean cast(CombatTouchLayout.Control control,boolean sendNormal) throws Exception {
+        normalAttack.stop();
         if(!available(control))return false;
+        boolean hiyukiR=control==LIBERATION&&"Hiyuki".equals(expected);
+        HiyukiHud.Phase before=hiyukiR?requireHiyukiPhase():HiyukiHud.Phase.UNKNOWN;
+        CombatSkillRetry retry=new CombatSkillRetry(realTimeMs());
         service.performGesture(layout.press(control,90,2400,1080));
-        long until=realTimeMs()+(control==LIBERATION?7000:1800);boolean animation=false;
+        if(sendNormal)normalAttack.request();
+        try {
+        long until=realTimeMs()+(control==LIBERATION?7000:1800);boolean animation=false;int transformedFrames=0;
         do {
             Thread.sleep(60);refresh();
             if(hud==null) {animation=true;continue;}
-            if(expected!=null&&!expected.equals(names.get(identity.active)))throw new IllegalStateException("施法后角色变化");
-            if(CombatHud.castConfirmed(CombatHud.Skill.READY,hud.skills.get(control))) {
+            if(expected!=null&&!expected.equals(names.get(identity.active)))checkCombat();
+            if(!hiyukiR&&CombatHud.castConfirmed(CombatHud.Skill.READY,hud.skills.get(control))) {
                 android.util.Log.i("WWCombat","confirmed "+expected+" "+control+" animation="+animation);
                 return true;
+            }
+            if(hiyukiR&&hiyukiPhase!=HiyukiHud.Phase.UNKNOWN&&hiyukiPhase!=before){
+                if(++transformedFrames>=2){
+                    android.util.Log.i("WWCombat","confirmed Hiyuki LIBERATION forte="+before+" -> "+hiyukiPhase);
+                    return true;
+                }
+                continue; // Wait for the second transformed frame before any retry can consume R2.
+            } else transformedFrames=0;
+            CombatSkillRetry.Step next=retry.next(realTimeMs(),capturedAt,hud.skills.get(control)==CombatHud.Skill.READY,animation);
+            if(next==CombatSkillRetry.Step.FINISHED)break;
+            if(next==CombatSkillRetry.Step.TAP) {
+                service.performGesture(layout.press(control,90,2400,1080));retry.sent(realTimeMs());
+                android.util.Log.i("WWCombat","retry ignored "+expected+" "+control);
             }
         } while(realTimeMs()<until);
         android.util.Log.i("WWCombat","unconfirmed "+expected+" "+control);
         return false;
+        } finally {normalAttack.stop();}
     }
     @Override public void normalClick() throws Exception {
         checkCombat();
-        service.performGesture(layout.press(ATTACK,65,2400,1080));
+        normalAttack.request();continueNormalAttack();
     }
+    private void continueNormalAttack() throws Exception {
+        if(Thread.currentThread().isInterrupted())throw new InterruptedException();
+        long now=realTimeMs();
+        boolean permitted=hud!=null&&identity!=null&&expected!=null&&!policy.uidConflict()&&!holdDesired
+                &&expected.equals(names.get(identity.active));
+        if(!normalAttack.due(now,permitted))return;
+        service.performGesture(layout.press(ATTACK,65,2400,1080));normalAttack.sent(now);
+        android.util.Log.d("WWCombatTiming","normal tap frameAge="+(now-capturedAt));
+    }
+    @Override public void poll() throws Exception {checkCombat();continueNormalAttack();}
     @Override public void normalAttack(long durationMs) throws Exception {
-        long start=activeTimeMs(),end=realTimeMs()+durationMs+7000;
-        do {
-            checkCombat();if(!held)service.performGesture(layout.press(ATTACK,65,2400,1080));
-            pause(80);
-            if(realTimeMs()>end)throw new IllegalStateException("普攻期间战斗计时未推进");
-        } while(activeTimeMs()-start<durationMs);
+        normalAttack(durationMs,80,false);
     }
     @Override public void heavyIfForte() throws Exception {if(forteFull())heavyAttack(600);}
     @Override public void heavyAttack(long durationMs) throws Exception {
@@ -198,6 +263,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         hold(ATTACK,down);
     }
     @Override public void hold(CombatTouchLayout.Control control, boolean down) throws Exception {
+        normalAttack.stop();
         if(down){
             layout.heldPoint(control);checkCombat();
             if(holdDesired) {
@@ -213,7 +279,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     }
     @Override public void pause(long durationMs) throws Exception {
         long end=realTimeMs()+durationMs;
-        while(realTimeMs()<end){Thread.sleep(Math.max(1,Math.min(80,end-realTimeMs())));if(realTimeMs()-readAt>200||realTimeMs()-capturedAt>1200)refresh();}
+        while(realTimeMs()<end){Thread.sleep(Math.max(1,Math.min(20,end-realTimeMs())));if(realTimeMs()-readAt>OBSERVATION_INTERVAL_MS||realTimeMs()-capturedAt>1200)refresh();continueNormalAttack();}
     }
     @Override public boolean concertoFull() throws Exception {checkCombat();return hud.concertoFull;}
     @Override public boolean forteFull() throws Exception {
@@ -240,12 +306,36 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         requireActiveCharacter(character);
         String missing=missingCalibration(character);
         if(!missing.isEmpty())throw new IllegalStateException("角色已接线但仍缺手机标定："+missing);
-        signal(PriorityBuiltinRotation.Signal.FLYING);
+        if(!character.equals("Hiyuki")&&!character.equals("Hsin"))signal(PriorityBuiltinRotation.Signal.FLYING);
     }
     @Override public boolean signal(PriorityBuiltinRotation.Signal value) throws Exception {
         checkCombat();
         return switch(value) {
             case FLYING -> flying();
+            case HSIN_H1, HSIN_H2, HSIN_LIB1, HSIN_LIB2 -> {
+                requireActiveCharacter("Hsin");
+                String name=switch(value){case HSIN_H1 -> "hsin_h1";case HSIN_H2 -> "hsin_h2";
+                    case HSIN_LIB1 -> "hsin_lib1";default -> "hsin_lib2";};
+                yield features.priority.feature(pixels,name,value==PriorityBuiltinRotation.Signal.HSIN_H1
+                        ||value==PriorityBuiltinRotation.Signal.HSIN_H2?ATTACK:LIBERATION);
+            }
+            case ENHANCED_E -> {
+                requireActiveCharacter("Hsin");yield PrioritySkillHud.highlighted(pixels,RESONANCE);
+            }
+            case HIYUKI_HEAVY -> {
+                requireActiveCharacter("Hiyuki");yield PrioritySkillHud.highlighted(pixels,ATTACK);
+            }
+            case HIYUKI_LEFT, HIYUKI_RIGHT -> {
+                requireActiveCharacter("Hiyuki");yield features.priority.feature(pixels,
+                        value==PriorityBuiltinRotation.Signal.HIYUKI_LEFT?"hiyuki_left":"hiyuki_right",
+                        value==PriorityBuiltinRotation.Signal.HIYUKI_LEFT?ATTACK:DODGE);
+            }
+            case LONG_ACTION, LONG_ACTION_2 -> {
+                requireActiveCharacter("Hiyuki");
+                HiyukiHud.Phase phase=requireHiyukiPhase();
+                yield features.priority.actionIndicator(pixels)&&(value==PriorityBuiltinRotation.Signal.LONG_ACTION_2)
+                        ==(phase==HiyukiHud.Phase.LIBERATED);
+            }
             case GALBRENA_RES -> {
                 requireActiveCharacter("Galbrena");yield galbrenaRes();
             }
@@ -272,7 +362,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         if(timeout<0||timeout>3000)throw new IllegalArgumentException("技能尝试时限越界");
         long start=realTimeMs();
         do {
-            if(available(control))return cast(control);
+            if(available(control))return cast(control,sendNormal);
             if(timeout==0)return false;
             if(sendNormal)normalClick();
             pause(50);
@@ -282,6 +372,9 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     @Override public long cooldownMs(CombatTouchLayout.Control control) throws Exception {
         checkCombat();
         if(hud.skills.get(control)==CombatHud.Skill.READY)return 0;
+        // PC get_cd() returns zero without a cooldown number. A dim R can still lack energy.
+        // Keep available() separate: this only permits Hiyuki's normal charging phase.
+        if(control==LIBERATION&&hud.skills.get(control)==CombatHud.Skill.DIM&&"Hiyuki".equals(names.get(identity.active)))return 0;
         if(hud.skills.get(control)!=CombatHud.Skill.COOLDOWN)throw new IllegalStateException("技能变暗但冷却读数未知");
         CombatGesture.Contact c=layout.point(control);float x=c.x,y=c.y;
         GardenRules.Text number=screen.one("[0-9]{1,2}(?:[.,][0-9])?[sS]?",x-40f/2400,y-32f/1080,x+40f/2400,y+32f/1080);
@@ -291,17 +384,19 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     @Override public void normalAttack(long duration,long interval,boolean interruptOnResonance) throws Exception {
         if(duration<0||duration>20000||interval<0||interval>1000)throw new IllegalArgumentException("普攻节拍越界");
         long activeStart=activeTimeMs(),wallStart=realTimeMs();
-        while(activeTimeMs()-activeStart<duration) {
+        try {
+        while(clock.attackPending(activeStart,wallStart,realTimeMs(),duration)) {
             checkCombat();
-            if(realTimeMs()-wallStart>duration+7000)throw new IllegalStateException("普攻冻结等待超时");
             if(interruptOnResonance&&available(RESONANCE))return;
-            normalClick();pause(Math.max(20,interval));
+            if(!held){normalAttack.request(interval);continueNormalAttack();}pause(Math.max(20,interval));
         }
+        checkCombat();
+        } finally {normalAttack.stop();}
     }
     @Override public void normalTap() throws Exception {normalClick();}
     @Override public void normalClick(long interval) throws Exception {
         if(interval<0||interval>1000)throw new IllegalArgumentException("普攻间隔越界");
-        normalClick();pause(Math.max(20,interval));
+        checkCombat();normalAttack.request(interval);continueNormalAttack();pause(Math.max(20,interval));
     }
     @Override public void waitDown(boolean sendNormal) throws Exception {waitStanding(2500);}
     @Override public void waitPartyHudOptional(long timeout) throws Exception {
@@ -315,43 +410,72 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         long start=realTimeMs();
         while(realTimeMs()-start<duration){cast(RESONANCE);pause(Math.max(50,interval));}
     }
-    @Override public boolean mouseForteFull(){throw new IllegalStateException("强化普攻图标未标定，未当作普通回路");}
-    @Override public boolean heavyMouseForte(){throw new IllegalStateException("强化普攻消失状态未标定");}
+    @Override public boolean mouseForteFull() throws Exception {
+        requireActiveCharacter("Hiyuki");return PrioritySkillHud.highlighted(pixels,ATTACK);
+    }
+    @Override public boolean heavyMouseForte() throws Exception {
+        if(!mouseForteFull())return false;
+        long start=realTimeMs(),gone=-1;
+        try{
+            holdAttack(true);
+            do{
+                refresh();checkCombat();
+                if(mouseForteFull())gone=-1;
+                else if(gone<0)gone=capturedAt;
+                else if(capturedAt-gone>=250)return true;
+                pause(50);
+            }while(realTimeMs()-start<2000);
+            return false;
+        }finally{holdAttack(false);}
+    }
     @Override public void defaultHeavyAttack() throws Exception {heavyAttack(600);}
     @Override public void dodgeClick(long interval) throws Exception {
         if(interval<0||interval>3000)throw new IllegalArgumentException("闪避节拍越界");
         checkCombat();long now=realTimeMs();
         if(lastDodge>=0&&now-lastDodge<interval)return;
+        normalAttack.stop();
         service.performGesture(layout.press(DODGE,90,2400,1080));lastDodge=now;
     }
     @Override public boolean enhancedResonance(long timeout,long minimumAnimation) throws Exception {
         if(minimumAnimation<0||minimumAnimation>3000)throw new IllegalArgumentException("强化共鸣动画时限越界");
-        long start=realTimeMs();boolean confirmed=castObserved(RESONANCE,false,timeout);
+        long start=realTimeMs();boolean confirmed=castObserved(RESONANCE,true,timeout);
         if(confirmed)pause(Math.max(0,minimumAnimation-(realTimeMs()-start)));
         return confirmed;
     }
     @Override public void tapResonance() throws Exception {
-        checkCombat();service.performGesture(layout.press(RESONANCE,90,2400,1080));lastResonanceTap=capturedAt;
+        normalAttack.stop();
+        checkCombat();lastResonancePrompt="Hsin".equals(names.get(identity.active))&&PrioritySkillHud.highlighted(pixels,RESONANCE);
+        service.performGesture(layout.press(RESONANCE,90,2400,1080));lastResonanceTap=capturedAt;
     }
     @Override public void recordResonanceConfirmed() throws Exception {
         checkCombat();
-        if(lastResonanceTap<0||capturedAt<=lastResonanceTap||hud.skills.get(RESONANCE)!=CombatHud.Skill.COOLDOWN)
+        boolean promptConsumed=lastResonancePrompt&&"Hsin".equals(names.get(identity.active))&&!PrioritySkillHud.highlighted(pixels,RESONANCE);
+        if(lastResonanceTap<0||capturedAt<=lastResonanceTap||hud.skills.get(RESONANCE)!=CombatHud.Skill.COOLDOWN&&!promptConsumed)
             throw new IllegalStateException("缺少共鸣输入后的新鲜冷却证据");
-        lastResonanceTap=-1;
+        lastResonanceTap=-1;lastResonancePrompt=false;
     }
     @Override public boolean confirmHeldLiberation(long started,long timeout) throws Exception {
         if(timeout<0||timeout>7000||started>realTimeMs())throw new IllegalArgumentException("持续解放核验时限越界");
         if(liberationHoldStarted<started||!liberationHoldReady)return false;
-        long until=realTimeMs()+timeout;
+        long until=realTimeMs()+timeout;int normalFrames=0;
         do {
             refresh();
             if(hud!=null&&identity!=null&&names.get(identity.active).equals(expected)&&capturedAt>started
-                    &&hud.skills.get(LIBERATION)==CombatHud.Skill.COOLDOWN) {
+                    &&("Hiyuki".equals(expected)?hiyukiPhase==HiyukiHud.Phase.NORMAL
+                        :hud.skills.get(LIBERATION)==CombatHud.Skill.COOLDOWN)) {
+                if("Hiyuki".equals(expected)&&++normalFrames<2)continue;
+                android.util.Log.i("WWCombat","confirmed held LIBERATION "+expected);
                 liberationHoldStarted=-1;liberationHoldReady=false;return true;
-            }
+            }else normalFrames=0;
             if(realTimeMs()<until)pause(50);
         }while(realTimeMs()<until);
         return false;
+    }
+    private HiyukiHud.Phase requireHiyukiPhase()throws Exception{
+        long until=realTimeMs()+2000;
+        while(hiyukiPhase==HiyukiHud.Phase.UNKNOWN&&realTimeMs()<until){refresh();checkCombat();}
+        if(hiyukiPhase==HiyukiHud.Phase.UNKNOWN)throw new IllegalStateException("绯雪回路形态连续未确认，未按旧阶段输出");
+        return hiyukiPhase;
     }
     private boolean flying() throws Exception {
         checkCombat();
@@ -366,6 +490,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         return false;
     }
     @Override public void dodge(long duration) throws Exception {
+        normalAttack.stop();
         if(duration<1||duration>1000)throw new IllegalArgumentException("闪避时长越界");
         long end=realTimeMs()+duration;
         do {checkCombat();service.performGesture(layout.press(DODGE,90,2400,1080));pause(100);}while(realTimeMs()<end);
@@ -390,7 +515,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     @Override public boolean breakAction() throws Exception {
         checkCombat();GardenRules.Text text=screen.one("震谐响应|谐度破坏",.60f,.35f,.88f,.72f);
         if(text==null)return false;
-        service.tap(text.x()*2400,text.y()*1080,2400,1080);refresh();return true;
+        normalAttack.stop();service.tap(text.x()*2400,text.y()*1080,2400,1080);refresh();return true;
     }
     @Override public void cycleSleep(long started) throws Exception {if(!breakAction())pause(Math.max(0,100-(realTimeMs()-started)));}
     @Override public boolean partyHudVisible() throws Exception {refresh();return hud!=null;}
@@ -400,8 +525,9 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     }
     @Override public void waitIntro(long timeoutMs) throws Exception {if(hasIntro())waitPartyHud(timeoutMs);}
     @Override public void waitStanding(long timeoutMs) {throw new IllegalStateException("当前手机角色尚未标定落地状态");}
-    @Override public void jump() throws Exception {checkCombat();service.performGesture(layout.press(JUMP,90,2400,1080));}
+    @Override public void jump() throws Exception {normalAttack.stop();checkCombat();service.performGesture(layout.press(JUMP,90,2400,1080));}
     @Override public void switchNext() throws Exception {
+        normalAttack.stop();
         long started=realTimeMs();
         checkCombat();int source=identity.active;boolean con=hud.concertoFull;
         int target=team.choose(source,con,rotations.priorities(names.get(source),con,activeTimeMs()),activeTimeMs());
@@ -430,5 +556,5 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
             Thread.sleep(100);refresh();
         }
     }
-    @Override public void close() throws Exception {try{holdAttack(false);}finally{service.combatCapture(false);}}
+    @Override public void close() throws Exception {normalAttack.stop();try{holdAttack(false);}finally{service.combatCapture(false);}}
 }

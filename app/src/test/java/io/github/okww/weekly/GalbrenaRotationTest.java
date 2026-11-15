@@ -63,7 +63,8 @@ public class GalbrenaRotationTest {
     @Test public void entryStillRejectsUncalibratedCharactersAfterDispatchWiring() {
         assertEquals("",TacetCombatPort.missingCalibration("Galbrena"));assertEquals("",TacetCombatPort.missingCalibration("Aemeath"));
         assertEquals("",TacetCombatPort.missingCalibration("Chisa"));
-        for(String n:new String[]{"Hsin","Hiyuki","workshop:Galbrena","",null})assertFalse(TacetCombatPort.missingCalibration(n).isEmpty());
+        assertEquals("",TacetCombatPort.missingCalibration("Hsin"));assertEquals("",TacetCombatPort.missingCalibration("Hiyuki"));
+        for(String n:new String[]{"workshop:Galbrena","",null})assertFalse(TacetCombatPort.missingCalibration(n).isEmpty());
     }
     @Test public void recordedPurpleEndpointNotGenericWhiteEndpoint() throws Exception {
         for(String name:new String[]{"galbrena-full","galbrena-full-second","galbrena-spent"}) {

@@ -8,6 +8,25 @@ import static org.junit.Assert.*;
 
 /** Completion-status geometry only; no claim that synthetic OCR is a live mail test. */
 public class DailyRewardsTest {
+    @Test public void mobileRadioIconTabsRequireTheirOwnPageAnchorsAndKeepUnverifiedStatus(){
+        DailyRewards r=new DailyRewards();r.start();
+        r.applied(new Action(Kind.BACK,"daily-mail-back","",0,0));
+        Screen rewards=new Screen(new ArrayList<>(Arrays.asList(t("先约电台",.09f,.06f),
+                t("大众频道",.16f,.50f),t("寰宇频道",.16f,.80f))),new int[0],2400f/1080);
+        Action taskTab=next(r,rewards);assertEquals("daily-pass-tasks-tab",taskTab.scene);
+        assertEquals(326f/1080,taskTab.y,0f);
+        for(int i=1;i<3;i++){
+            Screen missing=new Screen(new ArrayList<>(rewards.words),new int[0],2400f/1080);missing.words.remove(i);
+            assertEquals(Kind.WAIT,next(r,missing).kind);
+        }
+        Screen tasks=new Screen(new ArrayList<>(Arrays.asList(t("电台任务",.09f,.06f),
+                t("晨间放送",.16f,.34f),t("本周热播",.16f,.44f),t("当季专题",.16f,.54f))),new int[0],2400f/1080);
+        Action rewardTab=next(r,tasks);assertEquals("daily-pass-next-rewards",rewardTab.scene);
+        assertEquals(190f/1080,rewardTab.y,0f);r.applied(rewardTab);
+        assertEquals("daily-pass-back",next(r,rewards).scene);
+        assertEquals("unverified",r.status().get("pass-tasks"));
+        assertEquals("unverified",r.status().get("pass-rewards"));
+    }
     @Test public void recordedTerminalIconGlyphStillRequiresAllEnvelopeContext(){
         Screen terminal=new Screen(new ArrayList<>(Arrays.asList(t("必终端",.09f,.055f),t("索拉指南",.728f,.55f),
                 t("数据坞",.527f,.55f),t("联觉经验",.1f,.78f))),new int[0],2400f/1080);

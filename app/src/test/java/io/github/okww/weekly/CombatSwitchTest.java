@@ -80,12 +80,20 @@ public class CombatSwitchTest {
 
     @Test public void confirmationGraceStillHasHardDeadlineAndRejectsThirdCharacter() throws Exception {
         CombatSwitch s=new CombatSwitch(1,0,1000);s.next(1000,900,true,true,source());
-        assertEquals(WAIT,s.next(7499,7400,false,false,null).kind);
-        assertThrows(IllegalStateException.class,()->s.next(7500,7450,true,true,target()));
+        assertEquals(WAIT,s.next(10999,10900,false,false,null).kind);
+        assertThrows(IllegalStateException.class,()->s.next(11000,10950,true,true,target()));
         CombatSwitch other=new CombatSwitch(1,0,1000);other.next(1000,900,true,true,source());
         ActiveCharacterRecognizer.State third=new ActiveCharacterRecognizer.State(2,new int[]{0,1},
                 new float[]{.90f,.91f},new float[]{.25f,.39f});
         assertThrows(IllegalStateException.class,()->other.next(6000,5900,true,true,third));
+    }
+    @Test public void recordedImmediateAemeathToHsinWaitsForLatePortraitWithoutExtraTap() throws Exception {
+        CombatSwitch s=new CombatSwitch(1,0,1000);
+        assertEquals(TAP,s.next(1000,505,true,true,source()).kind);
+        for(long[] frame:new long[][]{{2000,1368},{2880,2442},{3950,3284},{5020,4402},{6006,5338},{7167,6421}})
+            assertEquals(WAIT,s.next(frame[0],frame[1],false,true,null).kind);
+        assertEquals(CONFIRMED,s.next(8276,7529,true,true,target()).kind);
+        assertEquals(1,s.attempts());
     }
 
     @Test public void invalidTargetCoordinatesAndMissingTargetCannotAuthorizeTap() throws Exception {

@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 final class ScreenReader implements AutoCloseable {
+    interface DuringRead { void run() throws Exception; }
     private final TextRecognizer recognizer = TextRecognition.getClient(new ChineseTextRecognizerOptions.Builder().build());
 
     static final class Word {
@@ -33,10 +34,23 @@ final class ScreenReader implements AutoCloseable {
     }
 
     Snapshot read(Bitmap frame) throws Exception {
+        return read(frame,null);
+    }
+    private Snapshot read(Bitmap frame,DuringRead duringRead) throws Exception {
         // OCR owns its copy until the asynchronous native task ends, including cancellation/timeouts.
         Bitmap input = frame.copy(Bitmap.Config.ARGB_8888, false);
         com.google.android.gms.tasks.Task<Text> task = recognizer.process(InputImage.fromBitmap(input, 0));
         task.addOnCompleteListener(Runnable::run, finished -> input.recycle());
+        if(duringRead!=null) {
+            long deadline=android.os.SystemClock.elapsedRealtime()+8000;
+            while(!task.isComplete()) {
+                duringRead.run();
+                long remaining=deadline-android.os.SystemClock.elapsedRealtime();
+                if(remaining<=0)throw new java.util.concurrent.TimeoutException("战斗OCR超时");
+                try { Tasks.await(task,Math.min(40,remaining),TimeUnit.MILLISECONDS); }
+                catch(java.util.concurrent.TimeoutException pending) { /* Pump only the caller's verified normal-attack intent. */ }
+            }
+        }
         Text result = Tasks.await(task, 8, TimeUnit.SECONDS);
         List<Word> words = new ArrayList<>();
         for (Text.TextBlock block : result.getTextBlocks()) for (Text.Line line : block.getLines()) {
@@ -47,15 +61,18 @@ final class ScreenReader implements AutoCloseable {
     }
 
     void enlarge(Snapshot snapshot, Bitmap frame, int left, int top, int width, int height) throws Exception {
+        enlarge(snapshot,frame,left,top,width,height,3);
+    }
+    void enlarge(Snapshot snapshot, Bitmap frame, int left, int top, int width, int height,int scale) throws Exception {
         Bitmap crop=Bitmap.createBitmap(frame,left,top,width,height);
-        Bitmap enlarged=Bitmap.createScaledBitmap(crop,width*3,height*3,true);
+        Bitmap enlarged=Bitmap.createScaledBitmap(crop,width*scale,height*scale,true);
         try {
             Snapshot detail=read(enlarged);
             snapshot.words.removeIf(w->w.bounds.centerX()>=left && w.bounds.centerX()<=left+width
                     && w.bounds.centerY()>=top && w.bounds.centerY()<=top+height);
             for(Word word:detail.words)snapshot.words.add(new Word(word.text,new Rect(
-                    left+Math.round(word.bounds.left/3f),top+Math.round(word.bounds.top/3f),
-                    left+Math.round(word.bounds.right/3f),top+Math.round(word.bounds.bottom/3f))));
+                    left+Math.round(word.bounds.left/(float)scale),top+Math.round(word.bounds.top/(float)scale),
+                    left+Math.round(word.bounds.right/(float)scale),top+Math.round(word.bounds.bottom/(float)scale))));
         } finally {enlarged.recycle();crop.recycle();}
     }
 
@@ -67,6 +84,9 @@ final class ScreenReader implements AutoCloseable {
     }
 
     Snapshot combat(Bitmap frame) throws Exception {
+        return combat(frame,null);
+    }
+    Snapshot combat(Bitmap frame,DuringRead duringRead) throws Exception {
         if(frame.getWidth()!=2400 || frame.getHeight()!=1080)throw new IllegalStateException("战斗OCR标定尺寸不符");
         Bitmap composite=Bitmap.createBitmap(CombatOcrLayout.WIDTH,CombatOcrLayout.HEIGHT,Bitmap.Config.ARGB_8888);
         try {
@@ -76,7 +96,7 @@ final class ScreenReader implements AutoCloseable {
             for(int[] t:CombatOcrLayout.TILES)canvas.drawBitmap(frame,new Rect(t[0],t[1],t[0]+t[2],t[1]+t[3]),
                     new Rect(t[4],t[5],t[4]+t[2]*t[6],t[5]+t[3]*t[6]),paint);
             List<Word> words=new ArrayList<>();
-            for(Word word:read(composite).words) {
+            for(Word word:read(composite,duringRead).words) {
                 Rect r=word.bounds;int[] p=CombatOcrLayout.project(r.left,r.top,r.right,r.bottom);
                 if(p!=null)words.add(new Word(word.text,new Rect(p[0],p[1],p[2],p[3])));
             }

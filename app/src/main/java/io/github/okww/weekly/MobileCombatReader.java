@@ -47,7 +47,7 @@ final class MobileCombatReader {
             try {
                 String[] geometry = file.substring(0, file.length()-4).split("_");
                 int sourceHeight = Integer.parseInt(geometry[geometry.length-3].split("x")[1]);
-                portraits.add(new PortraitMatcher.Template(name, pixels(image), sourceHeight));
+                portraits.add(new PortraitMatcher.Template(name, pixels(image), sourceHeight,file.contains("_mobile_")));
             } finally { image.recycle(); }
         }
         grayPortraits=PortraitMatcher.grayscaleTemplates(portraits);
@@ -58,18 +58,26 @@ final class MobileCombatReader {
     Observation read(Bitmap frame, GardenRules.Screen screen, long capturedAt, boolean ownedTacet) {
         if (frame.getWidth() != 2400 || frame.getHeight() != 1080)
             throw new IllegalStateException("战斗头像目前只标定了2400×1080布局");
-        boolean hud = (ownedTacet ? CombatHud.tacetActive(screen) : GardenRules.worldHud(screen) || CombatHud.tacetCombat(screen)
+        return observe(gameHud(screen,ownedTacet)?match(pixels(frame)):null,screen,capturedAt,ownedTacet);
+    }
+    PortraitMatcher.Match[] match(PortraitMatcher.Pixels image) {
+        return PortraitMatcher.mobileStandbyPair(image,portraits,grayPortraits);
+    }
+    java.util.concurrent.CompletableFuture<PortraitMatcher.Match[]> matchAsync(PortraitMatcher.Pixels image) {
+        return java.util.concurrent.CompletableFuture.supplyAsync(()->match(image));
+    }
+    Observation observe(PortraitMatcher.Match[] pair,GardenRules.Screen screen,long capturedAt,boolean ownedTacet) {
+        PortraitMatcher.Match first=pair==null?null:pair[0],second=pair==null?null:pair[1];
+        return new Observation(active.observe(first, second, 2400, 1080, capturedAt,
+                SystemClock.elapsedRealtime(), gameHud(screen,ownedTacet)), first, second);
+    }
+    private static boolean gameHud(GardenRules.Screen screen,boolean ownedTacet) {
+        // The owning combat Port separately requires arena anchors or its bounded recent-arena grace.
+        return (ownedTacet ? CombatHud.tacetContinued(screen) : GardenRules.worldHud(screen) || CombatHud.tacetCombat(screen)
                 || TacetTreasureNavigation.postWorld(screen))
                 && !screen.has("复苏|复活|挑战失败|使用药品|补充波片");
-        if (!hud) return new Observation(active.observe(null, null, 2400, 1080, capturedAt,
-                SystemClock.elapsedRealtime(), false), null, null);
-        PortraitMatcher.Pixels image = pixels(frame);
-        PortraitMatcher.Match[] pair=PortraitMatcher.mobileStandbyPair(image,portraits,grayPortraits);
-        PortraitMatcher.Match first=pair[0],second=pair[1];
-        return new Observation(active.observe(first, second, 2400, 1080, capturedAt,
-                SystemClock.elapsedRealtime(), true), first, second);
     }
-    private static PortraitMatcher.Pixels pixels(Bitmap bitmap) {
+    static PortraitMatcher.Pixels pixels(Bitmap bitmap) {
         int[] pixels = new int[bitmap.getWidth() * bitmap.getHeight()];
         bitmap.getPixels(pixels, 0, bitmap.getWidth(), 0, 0, bitmap.getWidth(), bitmap.getHeight());
         return new PortraitMatcher.Pixels(bitmap.getWidth(), bitmap.getHeight(), pixels);

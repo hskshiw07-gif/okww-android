@@ -331,8 +331,8 @@ final class GardenRules {
     static boolean worldStatus(Screen screen) {
         return screen.hasOne("(?i)(?:Lv[.]?|t)\\d{1,3}", .35f, .86f, .72f, .98f)
                 || ((screen.hasOne("[0-9][0-9A-Za-z]{1,6}/[0-9]{2,7}", .35f, .86f, .72f, .98f)
-                     // Actual phone OCR reads Lv.90 as L.90, .90, Lw.90, L90, w90, ta90, or 90; require a separate latency anchor.
-                     || screen.hasOne("(?i)(?:[Lliwvta]{1,2}[.]?|[.])?\\d{1,3}", .55f, .90f, .61f, .96f))
+                     // Actual phone OCR reads Lv.90 as L.90, u.90, .90, Lw.90, L90, w90, ta90, or 90; require a separate latency anchor.
+                     || screen.hasOne("(?i)(?:[Lliwvuta]{1,2}[.]?|[.])?\\d{1,3}", .55f, .90f, .61f, .96f))
                     && screen.hasOne(".{0,2}[0-9]{1,4}ms", .84f, .08f, .98f, .17f));
     }
 

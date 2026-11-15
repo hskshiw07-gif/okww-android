@@ -7,6 +7,12 @@ import static org.junit.Assert.*;
 import static io.github.okww.weekly.GardenRules.*;
 
 public class DailyLiveRegressionTest {
+    @Test public void recordedMissingDirectPrefixKeepsAllFourRowsWithoutRenumbering() {
+        Screen s=list();s.words.set(9,new Text("接挑战",2113f/2400,498f/1080,2153f/2400,521f/1080));
+        assertEquals(4,DailyRules.proceedButtons(s).size());assertEquals("接挑战",DailyRules.proceedButtons(s).get(1).value);
+        s.words.set(9,t("接挑战",.5f,.5f));assertEquals(3,DailyRules.proceedButtons(s).size());
+        assertEquals("daily-target-incomplete",rules().next(s).scene);
+    }
     private Text t(String text,float x,float y) { return new Text(text,x-.01f,y-.01f,x+.01f,y+.01f); }
     private Screen screen(Text... words) { return new Screen(new ArrayList<>(Arrays.asList(words)),new int[3],2400f/1080); }
     private DailyRules rules() {

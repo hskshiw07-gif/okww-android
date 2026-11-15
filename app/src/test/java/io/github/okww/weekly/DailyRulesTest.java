@@ -36,6 +36,37 @@ public class DailyRulesTest {
         if (claim) page.words.add(text("领取", .90f, .26f));
         return page;
     }
+    @Test public void developmentDailyBypassesPointsAndClaimRecognitionBeforeCombat() throws Exception {
+        for(int points:new int[]{90,100,110,-1}){
+            DailyTacet tacet=new DailyTacet();tacet.attachLedger(ledger());
+            DailyRules rules=new DailyRules(tacet,null,true);rules.teamConfirmed();
+            rules.observeUid(budgetBook(120));rules.observeUid(budgetBook(120));
+            GardenRules.Screen activity=budgetActivity(points,true);
+            if(points<0)activity.words.remove(2);
+            rules.activityFrame(null); // Missing reward icons must not block a combat replay.
+            assertEquals("daily-guide-boss-tab",rules.next(activity).scene);
+            assertFalse(rules.rewards.started());assertEquals(0,tacet.dailySpent());
+            assertEquals("daily-stamina-plan-check",rules.next(budgetBook(120)).scene);
+            rules.next(budgetBook(120));assertEquals(120,tacet.remainingPlan());
+            assertEquals("daily-guide-boss-tab",rules.next(activity).scene);
+        }
+    }
+    @Test public void developmentDailyStillHonorsOrdinaryBalanceAndRealDailyLedger() throws Exception {
+        for(boolean capped:new boolean[]{false,true}){
+            DailyStaminaLedger ledger=ledger();
+            if(capped)for(int balance=240;balance>=60;balance-=60){
+                ledger.reserve(balance,60,false,BUDGET_NOW);ledger.confirm(balance-60);
+            }
+            DailyTacet tacet=new DailyTacet();tacet.attachLedger(ledger);
+            DailyRules rules=new DailyRules(tacet,null,true);rules.teamConfirmed();
+            rules.observeUid(budgetBook(59));rules.observeUid(budgetBook(59));
+            if(!capped)assertEquals("daily-stamina-plan-check",rules.next(budgetBook(59)).scene);
+            assertEquals("daily-guide-first-tab",rules.next(budgetBook(59)).scene);
+            assertTrue(rules.rewards.started());assertEquals(0,tacet.reserved());
+            assertEquals(capped?240:0,tacet.dailySpent());
+            assertNotEquals("daily-guide-boss-tab",rules.next(budgetActivity(100,false)).scene);
+        }
+    }
     @Test public void activity100Or110DoesNotSkipAnUnplannedExecutableBudget() throws Exception {
         for (int points : new int[]{100, 110}) {
             DailyTacet tacet = new DailyTacet(); tacet.attachLedger(ledger());

@@ -25,6 +25,11 @@ final class DailyTacet {
     private String battleUid;
     private int recoveries,healedFrames;
     private boolean recovered;
+    private int unhealedFrames,recoveryZooms;
+    private boolean recoveryTravelSubmitted;
+    private PortraitMatcher.Match recoveryNexus;
+    void recoveryFrame(PortraitMatcher.Match nexus){recoveryNexus=nexus;}
+    private void resetRecovery(){healedFrames=unhealedFrames=recoveryZooms=0;recoveryTravelSubmitted=false;recoveryNexus=null;}
     void selected(){selected=true;}
     void entryTeamConfirmed(){entryTeam=true;}
     void treasureConfirmed(String uid){
@@ -110,6 +115,11 @@ final class DailyTacet {
     String stage(){return selected?stage.name():"NAVIGATION";}
     String reason(){return reason;}
     boolean recovering(){return stage==Stage.RECOVER_EXIT||stage==Stage.RECOVER_HEAL;}
+    void confirmedPartyDeath(String uid){
+        if(stage!=Stage.FIGHT||battleUid==null||!battleUid.equals(uid)||reserved()!=0||recoveries>=2)
+            throw new IllegalStateException("倒地恢复未归属本轮战斗、存在未核销扣费或已达恢复上限");
+        recoveries++;stage=Stage.RECOVER_EXIT;resetRecovery();
+    }
     void unconfirmedRecoveryFrame(){healedFrames=0;}
     boolean consumeRecovered(){boolean result=recovered;recovered=false;return result;}
     void beforeInput(Action action,long now){
@@ -135,13 +145,16 @@ final class DailyTacet {
             case "daily-tacet-claim-60", "daily-tacet-claim-120" -> {stage=Stage.SETTLE;offer=null;candidateBalance=null;settleFrames=0;}
             case "daily-tacet-repeat" -> {stage=Stage.LOADING;claimOpened=false;offer=null;offerFrames=settleFrames=0;candidateBalance=null;balanceBefore=lastBalance=-1;}
             case "daily-tacet-exit" -> stage=Stage.EXIT;
-            case "daily-tacet-recover-cancel" -> {if(stage==Stage.FIGHT)recoveries++;stage=Stage.RECOVER_EXIT;healedFrames=0;}
-            case "daily-tacet-recover-exit" -> {stage=Stage.RECOVER_HEAL;healedFrames=0;}
+            case "daily-tacet-recover-cancel" -> {if(stage==Stage.FIGHT)recoveries++;stage=Stage.RECOVER_EXIT;resetRecovery();}
+            case "daily-tacet-recover-exit" -> {stage=Stage.RECOVER_HEAL;resetRecovery();}
+            case "daily-tacet-recover-zoom" -> recoveryZooms++;
+            case "daily-tacet-recover-travel" -> recoveryTravelSubmitted=true;
             default -> { }
         }
     }
     Action next(Screen s){return next(s,false);}
     Action next(Screen s,boolean partyFullyHealed){
+        PortraitMatcher.Match nexus=recoveryNexus;recoveryNexus=null;
         if(pendingSettlement!=null)return Action.waitFor("daily-pending-settlement","中断的领取仅核销，不重提、不启动战斗");
         if(!selected||stage==Stage.DONE)return null;
         if(s.has("补充波片|兑换波片|结晶溶剂|使用结晶|购买|买药|确认解锁|使用药品|使用复苏"))return Action.stop("战斗或领奖期间不临时补充、不购买使用药品；备用资源仅由开战前专用流程核验");
@@ -176,10 +189,22 @@ final class DailyTacet {
             }
             if(stage==Stage.RECOVER_HEAL){
                 healedFrames=world&&partyFullyHealed?healedFrames+1:0;
+                unhealedFrames=world&&!partyFullyHealed?unhealedFrames+1:0;
+                if(!recoveryTravelSubmitted&&!s.automationPanelVisible()) {
+                    Text travel=MobileRecoveryReader.travel(s);
+                    if(travel!=null)return Action.tap("daily-tacet-recover-travel",travel);
+                    if(MobileRecoveryReader.map(s)) {
+                        if(nexus!=null&&nexus.score>=.90)
+                            return new Action(Kind.TAP,"daily-tacet-recover-nexus","选择已识别的中枢信标",nexus.x,nexus.y);
+                        if(recoveryZooms<2)return new Action(Kind.TAP,"daily-tacet-recover-zoom","缩小地图查找中枢信标",2226f/2400,735f/1080);
+                    }
+                    if(unhealedFrames>=3&&s.aspect>2.18f&&s.aspect<2.26f)
+                        return new Action(Kind.TAP,"daily-tacet-recover-map","打开地图，免费传送中枢信标恢复全队",.11f,.125f);
+                }
                 if(healedFrames<2)return Action.waitFor("daily-tacet-recover-heal","已退出挑战，等待全队真实复活满血；不假设出本会自动回血");
                 selected=entryTeam=claimOpened=retrySubmitted=false;
                 offer=null;offerFrames=settleFrames=0;candidateBalance=null;balanceBefore=lastBalance=-1;
-                battleUid=null;stage=Stage.ENTRY;healedFrames=0;recovered=true;
+                battleUid=null;stage=Stage.ENTRY;resetRecovery();recovered=true;
                 reason="全队恢复已连续核验，重新识别编队后进场；保留波片账本与重试次数";
                 return Action.waitFor("daily-tacet-recovered",reason);
             }
@@ -238,7 +263,9 @@ final class DailyTacet {
                             Action.tap("daily-tacet-claim-"+offerCost,offer);
                 }
                 candidateBalance=null;offerFrames=0;offer=null;
-                if(!claimOpened&&interaction!=null)return Action.tap("daily-tacet-open-claim",interaction);
+                // Opening the quote is reversible. A completed touch is not proof that the game opened it.
+                // The run guard requires two current observations and caps unchanged-scene inputs at four.
+                if(interaction!=null)return Action.tap("daily-tacet-open-claim",interaction);
                 Text claim=s.one("领取奖励",.15f,.50f,.85f,.94f);
                 if(success&&!claimOpened&&claim!=null)return Action.tap("daily-tacet-open-claim",claim);
                 return Action.waitFor("daily-tacet-price-wait","等待明确同按钮费用与余额；额度够则优先双倍120，剩余60或无双倍才单倍");

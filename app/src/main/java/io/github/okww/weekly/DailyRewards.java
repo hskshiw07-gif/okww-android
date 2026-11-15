@@ -105,7 +105,7 @@ final class DailyRewards {
         }
         if (departure != null) {
             if (departure.scene.equals("daily-mail-back") && title(screen, "邮件")
-                    || departure.scene.startsWith("daily-pass-") && title(screen, "先约(?:公约|电台)")) return departure;
+                    || departure.scene.startsWith("daily-pass-") && passPage(screen)) return departure;
             if (terminal || worldHud(screen)) departure = null;
         }
         if (stage == Stage.FINISHED) return terminal || worldHud(screen)
@@ -133,16 +133,21 @@ final class DailyRewards {
             Action action = claimSection("mail", all, empty);
             return action != null ? action : back("daily-mail-back", "邮件检查结束，继续先约公约");
         }
-        if ((stage == Stage.PASS_TASKS || stage == Stage.PASS_REWARDS) && title(screen, "先约(?:公约|电台)")) {
+        if ((stage == Stage.PASS_TASKS || stage == Stage.PASS_REWARDS) && passPage(screen)) {
             if (screen.has("本期已结束|本期公约已结束|公约尚未开启"))
                 return back("daily-pass-expired", "先约公约本期未开放，记录后返回");
             String section = stage == Stage.PASS_TASKS ? "pass-tasks" : "pass-rewards";
             String body = screen.text(.10f, .05f, .95f, .75f);
-            boolean taskPage = java.util.regex.Pattern.compile("每日任务|每周任务|本期任务").matcher(body).find();
-            boolean rewardPage = java.util.regex.Pattern.compile("先约凭证|寰宇特约|公约等级").matcher(body).find();
+            boolean mobileTasks = title(screen,"电台任务") && screen.has("晨间放送")
+                    && screen.has("本周热播") && screen.has("当季专题");
+            boolean mobileRewards = title(screen,"先约电台") && screen.has("大众频道") && screen.has("寰宇频道");
+            boolean taskPage = mobileTasks || java.util.regex.Pattern.compile("每日任务|每周任务|本期任务").matcher(body).find();
+            boolean rewardPage = mobileRewards || java.util.regex.Pattern.compile("先约凭证|寰宇特约|公约等级").matcher(body).find();
             boolean expectedPage = stage == Stage.PASS_TASKS ? taskPage && !rewardPage : rewardPage && !taskPage;
             if (!expectedPage) {
                 Text tab = screen.one(stage == Stage.PASS_TASKS ? "任务" : "奖励", 0, .10f, .20f, .80f);
+                if(tab==null && (stage==Stage.PASS_TASKS?mobileRewards:mobileTasks))
+                    return passTab(stage==Stage.PASS_TASKS);
                 return tab == null ? Action.waitFor("daily-pass-tab-wait", "等待先约公约任务/奖励页锚点与文字页签")
                         : Action.tap(stage == Stage.PASS_TASKS ? "daily-pass-tasks-tab" : "daily-pass-rewards-tab", tab);
             }
@@ -153,6 +158,7 @@ final class DailyRewards {
             if (action != null) return action;
             if (stage == Stage.PASS_TASKS) {
                 Text tab = screen.one("奖励", 0, .10f, .20f, .80f);
+                if(tab==null && mobileTasks)return passTab(false);
                 return tab == null ? Action.waitFor("daily-pass-tab-wait", "等待奖励页签，未完成的任务不记为已领取")
                         : Action.tap("daily-pass-next-rewards", tab);
             }
@@ -267,6 +273,12 @@ final class DailyRewards {
     static boolean title(Screen screen, String title) {
         // The leading menu icon becomes different single OCR glyphs (回/凹); never accept extra title words.
         return screen.one(".?" + title, 0, 0, .32f, .15f) != null;
+    }
+    private static boolean passPage(Screen s){return title(s,"(?:先约(?:公约|电台)|电台任务)");}
+    private static Action passTab(boolean tasks){
+        // Xiaomi 13 Pro: icon-only radio tabs, gated above by this page's own text anchors.
+        return new Action(Kind.TAP,tasks?"daily-pass-tasks-tab":"daily-pass-next-rewards",
+                tasks?"进入手机电台任务页":"返回手机电台奖励页",148f/2400,(tasks?326f:190f)/1080);
     }
     private static Action back(String scene, String description) { return new Action(Kind.BACK, scene, description, 0, 0); }
     private static Action awaiting(String reason) { return Action.waitFor("daily-claim-verifying", reason); }

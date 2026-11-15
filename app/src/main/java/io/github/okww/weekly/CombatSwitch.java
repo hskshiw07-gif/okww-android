@@ -26,8 +26,9 @@ final class CombatSwitch {
         if(now<lastNow)throw new IllegalArgumentException("切人时钟倒退");
         lastNow=now;
         long elapsed=now-started;
-        // Two-frame identity can arrive just after 5s; the extra 1.5s permits observation only, never another tap.
-        if(elapsed>=6500 || elapsed>=5000&&attempts==0)
+        // Recorded mobile intro/switch settles after 7.3s. Input still closes at 5s;
+        // the remaining time permits fresh same-account observation only.
+        if(elapsed>=10000 || elapsed>=5000&&attempts==0)
             throw new IllegalStateException("切人未由新鲜头像确认，不继续按目标角色输出");
         boolean fresh=capturedAt>=0&&capturedAt<=now&&now-capturedAt<=1200&&capturedAt>lastFrame;
         if(capturedAt>=0&&capturedAt<=now&&capturedAt>lastFrame)lastFrame=capturedAt;

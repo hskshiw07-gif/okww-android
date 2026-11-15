@@ -11,6 +11,27 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class TeamNameRecognizerTest {
+    @Test public void liveTeamSevenKeepsSlotOrderAndRequiresTwoFreshFrames() throws Exception {
+        TeamNameRecognizer r;
+        try (InputStreamReader catalog = new InputStreamReader(getClass().getResourceAsStream("/builtin-characters.tsv"), StandardCharsets.UTF_8)) {
+            r = TeamNameRecognizer.forXiaomi13Pro(catalog, 2400, 1080);
+        }
+        GardenRules.Screen frame = new GardenRules.Screen(new ArrayList<>(Arrays.asList(
+                new GardenRules.Text("武队伍7L", 136f/2400, 55f/1080, 296f/2400, 85f/1080),
+                new GardenRules.Text("、绯雪", 821f/2400, 835f/1080, 901f/2400, 864f/1080),
+                new GardenRules.Text("「爱弥斯", 1366f/2400, 835f/1080, 1460f/2400, 862f/1080),
+                new GardenRules.Text("心", 1982f/2400, 837f/1080, 2026f/2400, 862f/1080),
+                new GardenRules.Text("快速骗队", 1691f/2400, 963f/1080, 1806f/2400, 991f/1080),
+                new GardenRules.Text("已出战", 2023f/2400, 961f/1080, 2108f/2400, 989f/1080))), new int[3], 2400f/1080);
+        assertNull(r.observe(frame, 2400, 1080, 0, 750));
+        assertEquals(Arrays.asList("Hiyuki", "Aemeath", "Hsin"), r.observe(frame, 2400, 1080, 1000, 1750));
+        frame.words.set(0, t("武队伍7", .08f, .06f));
+        frame.words.set(5, t("开启挑战", .86f, .91f));
+        assertNotNull(r.observe(frame, 2400, 1080, 2000, 2750));
+        frame.words.remove(5);
+        assertNull(r.observe(frame, 2400, 1080, 3000, 3750));
+    }
+
     @Test public void liveEntryCommaBorderKeepsExactCharacterAndTwoFrames()throws Exception{
         GardenRules.Screen frame=screen(false,"、嘉贝莉娜","秧秧·玄翎","千咲");
         frame.words.add(t("武队伍4",.08f,.06f));frame.words.add(t("快速编队",.73f,.91f));frame.words.add(t("开启挑战",.86f,.91f));

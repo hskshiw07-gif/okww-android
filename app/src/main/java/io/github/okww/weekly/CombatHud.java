@@ -7,6 +7,9 @@ import static io.github.okww.weekly.CombatTouchLayout.Control.*;
 final class CombatHud {
     enum Skill { READY, COOLDOWN, DIM }
     static boolean castConfirmed(Skill before,Skill after){return before==Skill.READY&&after==Skill.COOLDOWN;}
+    static boolean transformationConfirmed(Skill before,Skill after,boolean animation){
+        return before==Skill.READY&&after==Skill.DIM&&animation;
+    }
     final EnumMap<CombatTouchLayout.Control, Skill> skills = new EnumMap<>(CombatTouchLayout.Control.class);
     final boolean concertoFull, forteFull;
     CombatHud(PortraitMatcher.Pixels frame, GardenRules.Screen screen, int element) {
@@ -57,9 +60,16 @@ final class CombatHud {
     static boolean tacetContinued(GardenRules.Screen s) {
         return anchors(s) && (objective(s)||timer(s)||s.one("[0-9]{3,6}/[0-9]{3,6}",.46f,.91f,.535f,.955f)!=null);
     }
+    static boolean mobileStatus(GardenRules.Screen s) {
+        // Dev111 read Lv.90 as Lい90. An unknown token also needs independent numeric HP and latency.
+        return s.hasOne(".{1,6}",.55f,.90f,.61f,.96f)
+                && (s.hasOne("(?i)(?:[Lliwvuta]{1,2}[.]?|[.]|以)?[0-9]{1,3}",.55f,.90f,.61f,.96f)
+                    || s.hasOne("[0-9]{1,6}/[0-9]{3,6}",.46f,.91f,.535f,.955f)
+                    && s.hasOne(".{0,2}[0-9]{1,4}ms",.84f,.08f,.98f,.17f));
+    }
     private static boolean anchors(GardenRules.Screen s) {
         return s.aspect>2.18f && s.aspect<2.26f && !s.automationPanelVisible() && AccountDailyConfig.detectUid(s)!=null
-                && s.hasOne("(?i)(?:[Lliwvta]{1,2}[.]?|[.]|以)?[0-9]{1,3}",.55f,.90f,.61f,.96f)
+                && mobileStatus(s)
                 && s.one("提示",.28f,.28f,.34f,.36f)==null
                 && !s.has("挑战成功|挑战失败|领取奖励|补充波片|复苏|复活");
     }

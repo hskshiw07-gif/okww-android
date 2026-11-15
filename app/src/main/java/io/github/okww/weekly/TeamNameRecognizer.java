@@ -83,9 +83,9 @@ final class TeamNameRecognizer {
         boolean deployControl = false;
         for (GardenRules.Text word : screen.words)
             if (word.value.matches("出战|出戰|快速[编編骗]队")) deployControl = true;
-        boolean entry=screen.one(".?队伍[1-6]",0,0,.25f,.15f)!=null && screen.one("开启挑战",.80f,.86f,.93f,.96f)!=null;
+        boolean entry=screen.one(".?队伍[1-9][0-9]*.?",0,0,.25f,.15f)!=null && screen.one("开启挑战",.80f,.86f,.93f,.96f)!=null;
         boolean normal=screen.one("编队|队伍配置")!=null
-                || screen.one(".?队伍[1-6].?",0,0,.25f,.15f)!=null
+                || screen.one(".?队伍[1-9][0-9]*.?",0,0,.25f,.15f)!=null
                 &&screen.one("已出战|出战",.80f,.86f,.93f,.96f)!=null;
         if (!(normal || entry) || !deployControl) {
             candidate = null; return null;

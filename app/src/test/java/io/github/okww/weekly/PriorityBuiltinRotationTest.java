@@ -229,13 +229,32 @@ public class PriorityBuiltinRotationTest {
     }
 
     @Test public void frozenActiveClockHasAnIndependentWallDeadline() {
-        for (String name : Arrays.asList("Chisa", "Hsin", "Qingxiao", "Hiyuki")) {
+        for (String name : Arrays.asList("Chisa", "Hsin", "Qingxiao")) {
             Port p = new Port(name); p.freeze = true; p.intro = p.buffs = true;
             if (name.equals("Hiyuki")) p.on(LONG_ACTION_2);
             assertThrows(name, IllegalStateException.class, () -> new PriorityBuiltinRotation(name).run(p));
             assertFalse(p.held); assertTrue(p.controls.isEmpty()); assertFalse(p.events.contains("S"));
             assertTrue(p.real < 106000);
         }
+    }
+    @Test public void hiyukiStandardWithoutReadyLiberationStillSwitchesWithinOriginalFieldWindow() throws Exception {
+        Port p=new Port("Hiyuki");p.freeze=true;p.libCd=0;p.on(LONG_ACTION);
+        new PriorityBuiltinRotation("Hiyuki").run(p);
+        assertTrue(p.events.contains("S"));assertTrue(p.real<78000);assertFalse(p.held);
+    }
+    @Test public void hiyukiSecondPhaseWithMissingActiveTimeStillFinishesItsFieldWindow() throws Exception {
+        Port p=new Port("Hiyuki");p.freeze=true;p.on(LONG_ACTION_2);
+        new PriorityBuiltinRotation("Hiyuki").run(p);
+        assertTrue(p.events.contains("S"));assertTrue(p.real<78000);assertFalse(p.held);
+    }
+    @Test public void slowVerifiedHiyukiFieldReleasesAndYieldsInsteadOfStoppingDaily() throws Exception {
+        Port p=new Port("Hiyuki"){
+            @Override public void checkCombat(){advance(1100);}
+        };
+        p.on(LONG_ACTION_2);p.on(HIYUKI_HEAVY);
+        new PriorityBuiltinRotation("Hiyuki").run(p);
+        assertTrue(p.events.contains("S"));assertFalse(p.held);assertTrue(p.controls.isEmpty());
+        assertTrue(p.real<125000);
     }
 
     @Test public void galbrenaFastIntroReleasesBeforeSwitchAndSkipsRemainingAxis() throws Exception {

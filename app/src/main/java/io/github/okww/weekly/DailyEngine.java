@@ -21,17 +21,20 @@ final class DailyEngine {
     }
     private DailyResult execute(boolean automate,AccountDailyConfig.Profile account) throws Exception {
         String day=DailyStaminaLedger.gameDay(System.currentTimeMillis());
-        DailyRules policy = new DailyRules(new DailyTacet(),account);
+        boolean development=account==null&&TestEnvironment.dailyReplay(service.getSharedPreferences("weekly",0),AutomationTask.DAILY);
+        DailyRules policy = new DailyRules(new DailyTacet(),account,development);
         GardenRunGuard guard = new GardenRunGuard(SystemClock.elapsedRealtime());
         String previousScene = "";
         String inspectDescription = "";
         int inspectFrames = 0;
+        int slowFrames = 0;
         TeamNameRecognizer recognizer = null;
         List<String> team = null;
         MobileCombatReader combatReader = null;
         String activeCharacter = null;
         TacetCombatPort port = null;
         MobileTreasureReader treasures = new MobileTreasureReader(service.getAssets());
+        MobileRecoveryReader recovery = new MobileRecoveryReader(service.getAssets());
         TacetTreasureNavigation treasureNavigation = null;
         boolean treasureCapture=false;
         ActivityRewardVision activityVision=new ActivityRewardVision();
@@ -45,24 +48,33 @@ final class DailyEngine {
             long capturedAt = SystemClock.elapsedRealtime();
             ScreenReader.Snapshot snapshot = null;
             boolean delegatedCombat = false;
+            java.util.concurrent.CompletableFuture<PortraitMatcher.Match[]> healingAvatars=null;
             try {
+                PortraitMatcher.Pixels recoveryPixels=null;
+                if(policy.tacet.recovering()&&combatReader!=null) {
+                    recoveryPixels=MobileCombatReader.pixels(bitmap);
+                    healingAvatars=combatReader.matchAsync(recoveryPixels);
+                }
                 snapshot = policy.tacet.seekingTreasure() ? reader.combat(bitmap)
                         : readSnapshot(reader, bitmap, policy.tacet.recovering());
-                if (SystemClock.elapsedRealtime() - capturedAt > 3500)
-                    throw new IllegalStateException("OCR耗时过长，本帧不操作；先运行只读检查预热模型");
+                if (SystemClock.elapsedRealtime() - capturedAt > 3500){
+                    if(++slowFrames>2)throw new IllegalStateException("OCR连续耗时过长，停止并保留现场");
+                    service.message("OCR正在预热，丢弃过期帧并重新采集");continue;
+                }
+                slowFrames=0;
                 GardenRules.Screen screen = GardenEngine.toScreen(snapshot, bitmap);
                 PortraitMatcher.Match treasure = TacetTreasureNavigation.postWorld(screen) ? treasures.find(bitmap) : null;
                 MobileCombatReader.Observation healing = null;
                 boolean partyFullyHealed = false;
                 if (policy.tacet.recovering() && combatReader != null && GardenRules.worldHud(screen)) {
-                    healing = combatReader.read(bitmap, screen, capturedAt);
+                    healing = combatReader.observe(healingAvatars.get(),screen,capturedAt,false);
                     if (healing.state != null) {
-                        int[] pixels = new int[bitmap.getWidth() * bitmap.getHeight()];
-                        bitmap.getPixels(pixels, 0, bitmap.getWidth(), 0, 0, bitmap.getWidth(), bitmap.getHeight());
-                        partyFullyHealed = PartyHealth.fullParty(new PortraitMatcher.Pixels(bitmap.getWidth(), bitmap.getHeight(), pixels), screen)
+                        partyFullyHealed = PartyHealth.fullParty(recoveryPixels, screen)
                                 && SystemClock.elapsedRealtime() - capturedAt <= 1500;
                     }
                 }
+                policy.tacet.recoveryFrame(policy.tacet.recovering()&&MobileRecoveryReader.map(screen)
+                        ?recovery.find(recoveryPixels!=null?recoveryPixels:MobileCombatReader.pixels(bitmap),screen):null);
                 long resourceNow=System.currentTimeMillis();
                 ActivityRewardVision.Observation activityIcons=null;
                 if(screen.one(".*活跃行迹",0,0,.25f,.15f)!=null){
@@ -126,6 +138,12 @@ final class DailyEngine {
                 else if(treasureNavigation!=null)treasureNavigation.unconfirmedFrame();
                 org.json.JSONObject recorded = GardenEngine.persist(service, AutomationTask.DAILY, snapshot, action, automate, SystemClock.elapsedRealtime() - started, team,
                         activeCharacter, combat, policy);
+                if(policy.tacet.recovering()) {
+                    recorded.put("recovery_identity_confirmed",healing!=null&&healing.state!=null);
+                    recorded.put("recovery_party_full",partyFullyHealed);
+                    recorded.put("recovery_capture_age_ms",SystemClock.elapsedRealtime()-capturedAt);
+                    GardenEngine.writeState(service,AutomationTask.DAILY.stateFile,recorded);
+                }
                 if(treasure!=null){recorded.put("treasure_score",treasure.score);recorded.put("treasure_x",treasure.x);recorded.put("treasure_y",treasure.y);
                     GardenEngine.writeState(service,AutomationTask.DAILY.stateFile,recorded);}
                 if(activityIcons!=null){
@@ -150,14 +168,6 @@ final class DailyEngine {
                     inspectFrames = action.description.equals(inspectDescription) ? inspectFrames + 1 : 1;
                     inspectDescription = action.description;
                 } else { inspectFrames = 0; inspectDescription = ""; }
-                if (!previousScene.equals(action.scene)) {
-                    capture.saveEvidence(bitmap, "daily-scene");
-                    if (DailyRules.unmatched(action)) {
-                        capture.saveEvidence(bitmap, "daily-unrecognized");
-                        GardenEngine.writeState(service, "daily-unrecognized.json", recorded);
-                    }
-                    previousScene = action.scene;
-                }
                 if (!automate || action.kind == GardenRules.Kind.STOP || inspectFrames >= 2) {
                     capture.saveEvidence(bitmap, "daily-inspect");
                     if (action.kind == GardenRules.Kind.STOP) throw new IllegalStateException(action.description);
@@ -183,8 +193,9 @@ final class DailyEngine {
                 // The seeker's own 45s/16-step bound measures movement, unlike the text-only menu guard.
                 if(policy.tacet.seekingTreasure()&&action.scene.equals("daily-tacet-treasure")) {Thread.sleep(250);continue;}
                 if (guard.ready(screen, action, SystemClock.elapsedRealtime())) {
-                    if(SystemClock.elapsedRealtime()-capturedAt>3500)
-                        throw new IllegalStateException("输入前画面已过期，未发送点击；保留现有账本");
+                    if(SystemClock.elapsedRealtime()-capturedAt>3500){
+                        service.message("输入前画面已过期，丢弃并重新采集；本帧未操作");continue;
+                    }
                     policy.beforeResourceInput(action,System.currentTimeMillis());
                     policy.tacet.beforeInput(action, System.currentTimeMillis());
                     if (action.kind == GardenRules.Kind.BACK) service.goBack();
@@ -195,11 +206,24 @@ final class DailyEngine {
                     }
                     policy.applied(action);
                 }
+                // Save the already-captured bitmap after dispatch: PNG compression must not
+                // consume the freshness window for navigation, recovery or reward inputs.
+                if (!previousScene.equals(action.scene)) {
+                    capture.saveEvidence(bitmap, "daily-scene");
+                    if (DailyRules.unmatched(action)) {
+                        capture.saveEvidence(bitmap, "daily-unrecognized");
+                        GardenEngine.writeState(service, "daily-unrecognized.json", recorded);
+                    }
+                    previousScene = action.scene;
+                }
             } catch(Exception failure) {
+                if(failure instanceof java.util.concurrent.TimeoutException&&team==null&&++slowFrames<=2){
+                    service.message("OCR模型初始化超时，重新采集预热；本帧未操作");continue;
+                }
                 try { if(!delegatedCombat)GardenEngine.saveFailure(service,"daily",bitmap,snapshot,started,failure); }
                 catch(Exception evidenceFailure){failure.addSuppressed(evidenceFailure);}
                 throw failure;
-            } finally { bitmap.recycle(); }
+            } finally { if(healingAvatars!=null)healingAvatars.cancel(true);bitmap.recycle(); }
             Thread.sleep(250);
         }
         throw new InterruptedException();
@@ -221,7 +245,11 @@ final class DailyEngine {
             reader.combatDetail(snapshot,bitmap);
         if (bitmap.getWidth()==2400 && bitmap.getHeight()==1080 && DailyRules.needsHudDetail(GardenEngine.toScreen(snapshot,bitmap),recovering)) {
             // 15px mobile HP/level text was repeatedly lost in full-screen OCR after leaving the arena.
-            reader.enlarge(snapshot,bitmap,1050,990,390,42);
+            if(recovering) {
+                // The 14px HP glyphs must exclude the bar borders: larger crops read '/' as '7' or omit it.
+                reader.enlarge(snapshot,bitmap,1120,1005,150,14,4);
+                reader.enlarge(snapshot,bitmap,2140,98,180,60,6);
+            } else reader.enlarge(snapshot,bitmap,1050,990,390,42);
         }
         float[] bounds = DailyRules.activityCrop(GardenEngine.toScreen(snapshot, bitmap));
         if (bounds == null) return snapshot;

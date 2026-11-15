@@ -77,9 +77,35 @@ public final class GameAccessibilityService extends AccessibilityService {
         if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && busy.get()
                 && event.getPackageName() != null && !event.getPackageName().equals(getPackageName())
                 && !event.getPackageName().equals(GardenRules.GAME_PACKAGE)
+                && !completedWindowEvent(event)
                 && !RedeemTextInput.expectedIme(this,event.getPackageName())
                 && !expectedPasteOverlay(event.getPackageName().toString(),event.getWindowId())
-                && !expectedBarrageOverlay(event.getPackageName().toString(),event.getWindowId())) stop("已切离游戏，停止："+event.getPackageName()+" / "+event.getClassName()+" / window="+event.getWindowId());
+                && !expectedBarrageOverlay(event.getPackageName().toString(),event.getWindowId())) {
+            String reason="已切离游戏，停止："+event.getPackageName()+" / "+event.getClassName()+" / window="+event.getWindowId();
+            if("miui.systemui.plugin".contentEquals(event.getPackageName())){
+                AccessibilityEvent copy=AccessibilityEvent.obtain(event);long observedGeneration=generation;
+                // MIUI's closing island can briefly precede the focus/window update.
+                // Capture and every input still independently require current game focus.
+                main.postDelayed(()->{try{
+                    if(busy.get()&&generation==observedGeneration&&!completedWindowEvent(copy))stop(reason);
+                }finally{copy.recycle();}},300);
+            }else stop(reason);
+        }
+    }
+
+    private boolean completedWindowEvent(AccessibilityEvent event) {
+        int id=event.getWindowId();
+        if(id<0||!gameInFront())return false;
+        for(AccessibilityWindowInfo window:getWindows())if(window.getId()==id){
+            android.graphics.Rect bounds=new android.graphics.Rect();window.getBoundsInScreen(bounds);
+            AccessibilityNodeInfo root=window.getRoot();
+            try {
+                // MIUI keeps its closed DynamicIslandWindow registered with height zero.
+                return !window.isActive()&&!window.isFocused()&&(bounds.isEmpty()||root!=null&&!root.isVisibleToUser());
+            } finally {if(root!=null)root.recycle();}
+        }
+        // Screen-sharing consent can report its closing window after the game already regained focus.
+        return true;
     }
 
     private boolean expectedPasteOverlay(String eventPackage,int eventWindowId){
@@ -160,7 +186,7 @@ public final class GameAccessibilityService extends AccessibilityService {
             long requestedGeneration = generation;
             AlertDialog dialog = new AlertDialog.Builder(this).setTitle("自动 · " + requestedTask.title)
                     .setMessage(TestEnvironment.enabled(getSharedPreferences("weekly",MODE_PRIVATE))
-                            ?requestedTask==AutomationTask.REDEEM?"测试环境 · 非开发请勿打开：每次重新获取公开码，并使用一条明确标记的合成测试码走完整设置、粘贴、提交、游戏结果和邮件流程。填码会覆盖系统剪贴板为当前合成码，不保存原内容；粘贴后两帧核对完整码才提交。测试码不代表奖励；真实记录保留，待核验仍阻止重试。不切号、不购买、不消耗波片。"
+                            ?requestedTask==AutomationTask.DAILY?TestEnvironment.DAILY_DESCRIPTION:requestedTask==AutomationTask.REDEEM?"测试环境 · 非开发请勿打开：每次重新获取公开码，并使用一条明确标记的合成测试码走完整设置、粘贴、提交、游戏结果和邮件流程。填码会覆盖系统剪贴板为当前合成码，不保存原内容；粘贴后两帧核对完整码才提交。测试码不代表奖励；真实记录保留，待核验仍阻止重试。不切号、不购买、不消耗波片。"
                             :"此任务尚未适配测试环境，自动执行将停止。请关闭测试环境后正常运行；不会清空真实波片或领奖记录。"
                             :requestedTask.confirmation)
                     .setPositiveButton("开始", (d, which) -> {
@@ -302,6 +328,9 @@ public final class GameAccessibilityService extends AccessibilityService {
     }
 
     Bitmap capture() throws Exception {
+        return capture(null);
+    }
+    Bitmap capture(ScreenReader.DuringRead duringCombatCapture) throws Exception {
         if (!gameInFront()) throw new IllegalStateException("请保持鸣潮游戏在前台");
         CaptureService capture = CaptureService.instance;
         if (capture == null) throw new IllegalStateException("请先授权屏幕采集");
@@ -310,6 +339,7 @@ public final class GameAccessibilityService extends AccessibilityService {
             while (true) {
                 Thread.sleep(40);
                 if (!gameInFront() || CaptureService.instance != capture) throw new IllegalStateException("战斗采集已失去前台");
+                if(duringCombatCapture!=null)duringCombatCapture.run();
                 try { return capture.freshFrame(after); }
                 catch (IllegalStateException notReady) { if (SystemClock.elapsedRealtime() >= deadline) throw notReady; }
             }
@@ -324,7 +354,7 @@ public final class GameAccessibilityService extends AccessibilityService {
             Thread.sleep(350);
             // Reject frames composed before the visibility change settled, not just before setVisibility.
             long hiddenAt = System.nanoTime();
-            long deadline = SystemClock.elapsedRealtime() + 5000;
+            long deadline = SystemClock.elapsedRealtime() + 15000;
             while (true) {
                 Thread.sleep(150);
                 if (!gameInFront()) throw new IllegalStateException("采集期间已切离游戏");

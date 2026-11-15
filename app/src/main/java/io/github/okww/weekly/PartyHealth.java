@@ -7,6 +7,16 @@ import java.util.regex.Pattern;
 final class PartyHealth {
     private static final Pattern HP=Pattern.compile("([1-9][0-9]{0,6})/([1-9][0-9]{0,6})");
 
+    static boolean deadStandby(PortraitMatcher.Pixels frame,int slot) {
+        if(frame==null||frame.width!=2400||frame.height!=1080||slot<0||slot>1)return false;
+        int top=slot==0?319:458;
+        for(int y=top;y<top+2;y++)for(int x=2135;x<2223;x++){
+            int c=frame.argb[y*2400+x],r=c>>16&255,g=c>>8&255,b=c&255;
+            if(r<40||r>60||Math.max(r,Math.max(g,b))-Math.min(r,Math.min(g,b))>3)return false;
+        }
+        return true;
+    }
+
     static boolean fullParty(PortraitMatcher.Pixels frame,GardenRules.Screen screen) {
         if(frame==null||screen==null||frame.width!=2400||frame.height!=1080
                 ||!GardenRules.worldHud(screen)||AccountDailyConfig.detectUid(screen)==null

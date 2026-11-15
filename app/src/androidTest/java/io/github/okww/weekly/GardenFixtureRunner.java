@@ -18,11 +18,13 @@ public final class GardenFixtureRunner extends Instrumentation {
     private boolean uiOnly;
     private String expectedLocalResultScore;
     private String expectedLocalBalance;
+    private boolean recoveryOnly;
     @Override public void onCreate(Bundle arguments) {
         super.onCreate(arguments);
         uiOnly = arguments != null && "true".equals(arguments.getString("uiOnly"));
         expectedLocalResultScore = arguments == null ? null : arguments.getString("resultScore");
         expectedLocalBalance = arguments == null ? null : arguments.getString("dailyBalance");
+        recoveryOnly=arguments!=null&&"true".equals(arguments.getString("dailyRecovery"));
         Thread watchdog = new Thread(() -> {
             try { Thread.sleep(20000); } catch (InterruptedException ignored) { return; }
             if (finished) return;
@@ -48,6 +50,7 @@ public final class GardenFixtureRunner extends Instrumentation {
         Bundle result = new Bundle();
         if (uiOnly) { verifyConsole(result); return; }
         if(expectedLocalBalance!=null){verifyDailyBalance(result);return;}
+        if(recoveryOnly){verifyRecovery(result);return;}
         JSONArray cases = new JSONArray();
         int failures = 0;
         String[][] fixtures = {{"26.png", "new-stage"}, {"27.png", "stage-confirm"},
@@ -125,6 +128,24 @@ public final class GardenFixtureRunner extends Instrumentation {
         }
     }
 
+    private void verifyRecovery(Bundle result){
+        Bitmap bitmap=null;
+        try(ScreenReader reader=new ScreenReader()){
+            bitmap=BitmapFactory.decodeFile(new File(getTargetContext().getFilesDir(),"evidence/daily-recovery-fixture.png").getPath());
+            if(bitmap==null)throw new IllegalStateException("Missing private recovery fixture");
+            // Warm ML Kit separately; the replay asserts actual OCR + party bars, with no fabricated HP text.
+            DailyEngine.readSnapshot(reader,bitmap,true);
+            long start=android.os.SystemClock.elapsedRealtime();
+            ScreenReader.Snapshot snapshot=DailyEngine.readSnapshot(reader,bitmap,true);
+            GardenRules.Screen screen=GardenEngine.toScreen(snapshot,bitmap);
+            boolean passed=PartyHealth.fullParty(MobileCombatReader.pixels(bitmap),screen);
+            JSONArray words=new JSONArray();for(ScreenReader.Word word:snapshot.words)words.put(word.text);
+            result.putString("stream",new JSONObject().put("passed",passed).put("world",GardenRules.worldHud(screen))
+                    .put("recognition_ms",android.os.SystemClock.elapsedRealtime()-start).put("ocr",words).toString());
+            finished=true;finish(passed?Activity.RESULT_OK:Activity.RESULT_CANCELED,result);
+        }catch(Exception error){finished=true;result.putString("stream","Recovery replay failed: "+error);finish(Activity.RESULT_CANCELED,result);}
+        finally{if(bitmap!=null)bitmap.recycle();}
+    }
     private void verifyDailyBalance(Bundle result){
         Bitmap bitmap=null;
         try(ScreenReader reader=new ScreenReader()){

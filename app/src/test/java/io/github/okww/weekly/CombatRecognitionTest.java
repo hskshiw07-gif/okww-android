@@ -15,6 +15,33 @@ import java.util.List;
 import static org.junit.Assert.*;
 
 public class CombatRecognitionTest {
+    @Test public void recordedLatencyFailureHasReliablePortraitsButStillRequiresFreshConsecutiveFrames() throws Exception {
+        var all=templates(catalog(),new ArrayList<>(catalog().characters.keySet()));
+        int[] colors=new int[2400*1080];
+        ChisaHudTest.paste(colors,ChisaHudTest.read("/priority-mobile/identity-latency-hiyuki.png"),2125,215);
+        ChisaHudTest.paste(colors,ChisaHudTest.read("/priority-mobile/identity-latency-aemeath.png"),2125,355);
+        var pair=PortraitMatcher.mobileStandbyPair(new PortraitMatcher.Pixels(2400,1080,colors),all,PortraitMatcher.grayscaleTemplates(all));
+        assertEquals("Hiyuki",pair[0].character);assertTrue(pair[0].reliable());
+        assertEquals("Aemeath",pair[1].character);assertTrue(pair[1].reliable());
+        var active=new ActiveCharacterRecognizer(Arrays.asList("Hiyuki","Aemeath","Hsin"));
+        assertNull(active.observe(pair[0],pair[1],2400,1080,100,1642,true));
+        assertNull(active.observe(pair[0],pair[1],2400,1080,2000,2800,true));
+        assertEquals(2,active.observe(pair[0],pair[1],2400,1080,2900,3700,true).active);
+        assertNull(active.observe(pair[0],pair[1],2400,1080,3800,4600,false));
+    }
+    @Test public void recordedMobileHiyukiCompetesAgainstEveryOriginalPortrait() throws Exception {
+        var catalog=catalog();var all=templates(catalog,new ArrayList<>(catalog.characters.keySet()));
+        int[] colors=new int[2400*1080];
+        ChisaHudTest.paste(colors,ChisaHudTest.read("/priority-mobile/hiyuki-standby.png"),2125,215);
+        ChisaHudTest.paste(colors,ChisaHudTest.read("/priority-mobile/hsin-standby.png"),2125,355);
+        var frame=new PortraitMatcher.Pixels(2400,1080,colors);
+        var pair=PortraitMatcher.mobileStandbyPair(frame,all,PortraitMatcher.grayscaleTemplates(all));
+        assertEquals("Hiyuki",pair[0].character);assertTrue(pair[0].reliable());
+        assertEquals("Hsin",pair[1].character);assertTrue(pair[1].reliable());
+        var active=new ActiveCharacterRecognizer(Arrays.asList("Hiyuki","Aemeath","Hsin"));
+        assertNull(active.observe(pair[0],pair[1],2400,1080,100,400,true));
+        assertEquals(1,active.observe(pair[0],pair[1],2400,1080,900,1200,true).active);
+    }
     private BuiltinCombatCatalog catalog() throws Exception {
         try (InputStreamReader input = new InputStreamReader(getClass().getResourceAsStream("/builtin-combat.tsv"), StandardCharsets.UTF_8)) {
             return new BuiltinCombatCatalog(input);
@@ -36,7 +63,7 @@ public class CombatRecognitionTest {
                 assertNotNull(file, input);
                 String[] geometry = file.substring(0, file.length()-4).split("_");
                 int height = Integer.parseInt(geometry[geometry.length-3].split("x")[1]);
-                result.add(new PortraitMatcher.Template(name, pixels(input), height));
+                result.add(new PortraitMatcher.Template(name, pixels(input), height,file.contains("_mobile_")));
             }
         }
         return result;
@@ -49,10 +76,11 @@ public class CombatRecognitionTest {
         assertArrayEquals(saved,original);
         List<PortraitMatcher.Template> all=templates(catalog(),new ArrayList<>(catalog().characters.keySet()));
         List<PortraitMatcher.Template> converted=PortraitMatcher.grayscaleTemplates(all);
-        assertEquals(66,converted.size());
+        assertEquals(67,converted.size());
         for(int i=0;i<all.size();i++) {
             assertEquals(all.get(i).character,converted.get(i).character);
             assertEquals(all.get(i).sourceHeight,converted.get(i).sourceHeight);
+            assertEquals(all.get(i).nativeSize,converted.get(i).nativeSize);
             assertEquals(all.get(i).pixels.width,converted.get(i).pixels.width);
             assertEquals(all.get(i).pixels.height,converted.get(i).pixels.height);
             assertNotSame(all.get(i).pixels.argb,converted.get(i).pixels.argb);
@@ -125,7 +153,7 @@ public class CombatRecognitionTest {
     }
     @Test public void entireBuiltinRegistryAndOriginalAssetChecksumsArePackaged() throws Exception {
         BuiltinCombatCatalog catalog = catalog();
-        assertEquals(57, catalog.characters.size()); assertEquals(66, catalog.hashes.size());
+        assertEquals(57, catalog.characters.size()); assertEquals(67, catalog.hashes.size());
         assertEquals(BuiltinCombatCatalog.Role.MAIN_DPS, catalog.require("YangYangSp").role);
         assertEquals(BuiltinCombatCatalog.Role.HEALER, catalog.require("ShoreKeeper").role);
         assertEquals(28000, catalog.require("ShoreKeeper").buffMs);
@@ -220,5 +248,16 @@ public class CombatRecognitionTest {
         assertEquals(300,clock.observe(5100,false,true));
         assertFalse(clock.observationGap());
         assertThrows(IllegalArgumentException.class, () -> clock.observe(3200,false,true));
+    }
+    @Test public void slowFramesEndTheAttackBurstWithoutInventingActiveCombatTime() {
+        CombatClock clock=new CombatClock();clock.observe(0,false,true);
+        for(long now=1800;now<=7200;now+=1800){
+            clock.observe(now,false,true);assertEquals(0,clock.activeTimeMs());
+            assertTrue(clock.attackPending(0,0,now,1000));
+        }
+        assertFalse(clock.attackPending(0,0,8000,1000));assertEquals(0,clock.activeTimeMs());
+        clock.observe(7300,false,true);assertEquals(100,clock.activeTimeMs());
+        assertFalse(clock.attackPending(0,0,7300,100));
+        assertThrows(IllegalArgumentException.class,()->clock.attackPending(0,8000,7300,100));
     }
 }

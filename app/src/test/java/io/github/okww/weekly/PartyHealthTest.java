@@ -11,6 +11,12 @@ import static io.github.okww.weekly.GardenRules.*;
 import static org.junit.Assert.*;
 
 public class PartyHealthTest {
+    @Test public void recordedFallenStandbyRequiresEntireEmptyBar() throws Exception {
+        int[] colors=new int[2400*1080];ChisaHudTest.paste(colors,ChisaHudTest.read("/priority-mobile/hiyuki-dead-standby.png"),2120,225);
+        var image=new PortraitMatcher.Pixels(2400,1080,colors);
+        assertTrue(PartyHealth.deadStandby(image,0));assertFalse(PartyHealth.deadStandby(image,1));
+        colors[319*2400+2135]=0xffd5d5d5;assertFalse(PartyHealth.deadStandby(image,0));
+    }
     private static Text t(String text,float x,float y){return new Text(text,x-.005f,y-.005f,x+.005f,y+.005f);}
     private static Screen world(String hp) {
         return new Screen(new ArrayList<>(Arrays.asList(t(hp,.495f,.937f),t("Lv.90",.58f,.938f),

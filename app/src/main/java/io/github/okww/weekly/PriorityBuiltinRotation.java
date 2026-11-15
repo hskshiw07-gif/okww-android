@@ -8,6 +8,7 @@ import static io.github.okww.weekly.CombatTouchLayout.Control.*;
 
 /** First-party priority characters. Control-flow translation, NOT a mobile calibration claim. */
 final class PriorityBuiltinRotation {
+    private static final class FieldLimit extends IllegalStateException {}
     static final Set<String> CHARACTERS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
             "Chisa", "Hiyuki", "Qingxiao", "Phrolova", "Hsin", "Galbrena")));
     enum Signal {
@@ -56,7 +57,7 @@ final class PriorityBuiltinRotation {
         p.requirePriorityCalibration(character);
         wallStart = p.realTimeMs(); activeStart = p.activeTimeMs();
         check(p);
-        switch (character) {
+        try {switch (character) {
             case "Chisa" -> { if (p.chisaDps()) chisaDps(p); else chisaSupport(p); }
             case "Hiyuki" -> hiyuki(p);
             case "Qingxiao" -> qingxiao(p);
@@ -64,8 +65,12 @@ final class PriorityBuiltinRotation {
             case "Hsin" -> hsin(p);
             case "Galbrena" -> galbrena(p);
             default -> throw new IllegalStateException("内置角色分派缺失");
+        }}catch(FieldLimit limit){
+            // A verified Hiyuki field that runs out of time yields to the team;
+            // gesture helpers release in finally, and unknown HUD/identity still aborts.
+            if(!character.equals("Hiyuki"))throw limit;
         }
-        check(p); p.switchNext(); kendoCount = 0;
+        p.requireActiveCharacter(character);p.checkCombat();p.switchNext();kendoCount = 0;
     }
 
     private void chisaSupport(Port p) throws Exception {
@@ -300,22 +305,23 @@ final class PriorityBuiltinRotation {
         }
     }
     private void hiyukiStandard(Port p, long duration) throws Exception {
-        while (signal(p, Signal.LONG_ACTION) && elapsed(p.activeTimeMs(), activeStart) < duration) {
+        long deadline=wallStart+duration;
+        while (signal(p, Signal.LONG_ACTION) && elapsed(p.activeTimeMs(), activeStart) < duration && p.realTimeMs()<deadline) {
             p.echo(0); p.resonance(false, 0);
             if (p.available(LIBERATION) && p.liberation(-1, false, 100)) return;
             if (p.mouseForteFull()) {
                 p.dodgeClick(0); p.heavyMouseForte();
-                waitAvailable(p, LIBERATION, 16000, true);
+                waitAvailable(p, LIBERATION, Math.max(0,Math.min(16000,deadline-p.realTimeMs())), true);
                 if (p.liberation(-1, false, 100)) return;
             } else p.normalClick(100);
             tick(p, 50);
         }
     }
     private boolean hiyukiLib(Port p, long duration) throws Exception {
-        long start = p.activeTimeMs();
-        while (signal(p, Signal.LONG_ACTION_2) && elapsed(p.activeTimeMs(), start) < duration) {
+        long start = p.activeTimeMs(), wall=p.realTimeMs();
+        while (signal(p, Signal.LONG_ACTION_2) && elapsed(p.activeTimeMs(), start) < duration && elapsed(p.realTimeMs(),wall)<duration) {
             check(p); p.breakAction(); p.echo(0);
-            boolean nearEnd = elapsed(p.activeTimeMs(), start) >= duration - 500;
+            boolean nearEnd = Math.max(elapsed(p.activeTimeMs(), start),elapsed(p.realTimeMs(),wall)) >= duration - 500;
             if (p.available(LIBERATION) && (kendoCount >= 4 || nearEnd) && holdLiberation(p)) return true;
             if (p.resonance(false, 0)) {
                 if (nearEnd) break;
@@ -392,13 +398,13 @@ final class PriorityBuiltinRotation {
     }
     private void normal(Port p, long ms) throws Exception { check(p); p.normalAttack(ms, 100, false); }
     private boolean signal(Port p, Signal signal) throws Exception { check(p); return p.signal(signal); }
-    private void tick(Port p, long ms) throws Exception { check(p); p.pause(ms); p.refresh(); check(p); }
-    private void cycle(Port p, long start) throws Exception { check(p); p.cycleSleep(start); p.refresh(); check(p); }
+    private void tick(Port p, long ms) throws Exception { check(p); p.pause(ms); p.poll(); check(p); }
+    private void cycle(Port p, long start) throws Exception { check(p); p.cycleSleep(start); p.poll(); check(p); }
     private void check(Port p) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
         p.requireActiveCharacter(character); p.checkCombat();
         if (elapsed(p.realTimeMs(), wallStart) >= 45000)
-            throw new IllegalStateException("优先角色轴超过45秒，停止并释放触控");
+            throw new FieldLimit();
     }
     private static long elapsed(long now, long before) {
         if (now < before) throw new IllegalStateException("角色战斗时钟倒退");

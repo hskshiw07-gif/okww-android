@@ -58,12 +58,24 @@ public class DailyTacetTest {
         GardenRunGuard guard=new GardenRunGuard(0);
         Action first=f.next(near);assertEquals("daily-tacet-open-claim",first.scene);assertEquals("CLAIM",f.stage());
         assertFalse(guard.ready(near,first,100));Action second=f.next(near);assertTrue(guard.ready(near,second,200));
-        f.applied(second);assertEquals("daily-tacet-price-wait",f.next(near).scene);assertEquals(0,f.spent());assertEquals(0,f.reserved());
+        f.applied(second);assertEquals("daily-tacet-open-claim",f.next(near).scene);assertEquals(0,f.spent());assertEquals(0,f.reserved());
         assertEquals("daily-tacet-price-check",f.next(result(240,true)).scene);
         assertEquals("daily-tacet-claim-60",f.next(result(240,true)).scene);
         DailyTacet unowned=new DailyTacet();assertNull(unowned.next(near));
         DailyTacet wrong=fighting(new Memory());near.words.set(1,t("特征码:111111111",.91f,.98f));
         assertEquals(Kind.STOP,wrong.next(near).kind);
+    }
+    @Test public void ignoredRewardPromptTouchesRetryWithoutReservingAndStopAtFour() throws Exception {
+        DailyTacet f=fighting(new Memory());
+        Screen near=screen(t("L.90",.58f,.94f),t("特征码:000000000",.91f,.98f),t("领取奖励",1613f/2400,459f/1080));
+        GardenRunGuard guard=new GardenRunGuard(0);
+        for(int n=0;n<4;n++) {
+            Action a=f.next(near);assertEquals("daily-tacet-open-claim",a.scene);
+            assertFalse(guard.ready(near,a,n*200));assertTrue(guard.ready(near,f.next(near),n*200+100));f.applied(a);
+            assertEquals(0,f.reserved());assertEquals(0,f.spent());
+        }
+        assertFalse(guard.ready(near,f.next(near),900));
+        assertThrows(IllegalStateException.class,()->guard.ready(near,f.next(near),1000));
     }
     @Test public void reserveBeforeTouchAndVerifyTwiceBeforeRepeatingFourTimes() throws Exception {
         Memory memory=new Memory();DailyTacet f=fighting(memory);
@@ -138,6 +150,13 @@ public class DailyTacetTest {
         assertEquals("daily-tacet-team",f.next(entry).scene);
         f.entryTeamConfirmed();f.applied(f.next(entry));
         assertEquals("daily-tacet-combat",f.next(CombatHudTest.battle()).scene);
+    }
+    @Test public void confirmedAutomaticDeathSwitchUsesExistingRecoveryAndBound() throws Exception {
+        DailyTacet f=fighting(new Memory());
+        assertThrows(IllegalStateException.class,()->f.confirmedPartyDeath("111111111"));
+        f.confirmedPartyDeath("000000000");assertTrue(f.recovering());
+        assertEquals("daily-tacet-recover-menu",f.next(CombatHudTest.battle()).scene);
+        assertThrows(IllegalStateException.class,()->f.confirmedPartyDeath("000000000"));
     }
     @Test public void ownedDeathCancelsWithoutItemsExitsAndRequiresRealPartyHealing() throws Exception {
         DailyTacet f=fighting(new Memory());
@@ -246,12 +265,32 @@ public class DailyTacetTest {
         assertEquals("daily-tacet-recover-heal",r.next(outside("000000000"),true).scene);
         assertEquals("daily-tacet-recovered",r.next(outside("000000000"),true).scene);
     }
-    @Test public void waitingForRealHealingUsesTheDefaultTwentyFiveSecondGuard() throws Exception {
+    @Test public void unhealedPartyOpensMapThenTravelsOnceAndVerifiesRealHealing() throws Exception {
         DailyTacet f=fighting(new Memory());cancelAndExit(f);Screen world=outside("000000000");
-        Action wait=f.next(world);GardenRunGuard guard=new GardenRunGuard(0);
-        assertFalse(guard.ready(world,wait,0));
-        assertThrows(IllegalStateException.class,()->guard.ready(world,f.next(world),25001));
-        assertTrue(f.recovering());assertFalse(f.finished());
+        for(int n=0;n<2;n++)assertEquals("daily-tacet-recover-heal",f.next(world).scene);
+        Action open=f.next(world);assertEquals("daily-tacet-recover-map",open.scene);f.applied(open);
+        Screen map=screen(t("切换地图",.82f,.93f),t("特征码:000000000",.91f,.98f));
+        f.recoveryFrame(new PortraitMatcher.Match("nexus",.99,-1,.2f,.4f));
+        Action nexus=f.next(map);assertEquals("daily-tacet-recover-nexus",nexus.scene);assertEquals(.2f,nexus.x,.001);f.applied(nexus);
+        // Pixel evidence is consumed per frame; an old match cannot survive into another map observation.
+        assertEquals("daily-tacet-recover-zoom",f.next(map).scene);
+        Screen detail=screen(t("中枢信标",.80f,.05f),t("快速旅行",.84f,.92f),t("特征码:000000000",.91f,.98f));
+        Action travel=f.next(detail);assertEquals("daily-tacet-recover-travel",travel.scene);f.applied(travel);
+        assertEquals(Kind.WAIT,f.next(detail).kind);
+        for(int n=0;n<5;n++)assertEquals("daily-tacet-recover-heal",f.next(world).scene);
+        assertEquals(0,f.spent());assertEquals(0,f.reserved());assertTrue(f.recovering());heal(f);reenter(f);
+    }
+    @Test public void recoveryMapSearchIsBoundedAndTravelRequiresNamedNexusAndSameUid() throws Exception {
+        DailyTacet f=fighting(new Memory());cancelAndExit(f);
+        Screen map=screen(t("切换地图",.82f,.93f),t("特征码:000000000",.91f,.98f));
+        for(int n=0;n<2;n++){Action zoom=f.next(map);assertEquals("daily-tacet-recover-zoom",zoom.scene);f.applied(zoom);}
+        assertEquals(Kind.WAIT,f.next(map).kind);
+        Screen beacon=screen(t("小型信标",.80f,.05f),t("快速旅行",.84f,.92f),t("特征码:000000000",.91f,.98f));
+        assertEquals(Kind.WAIT,f.next(beacon).kind);
+        beacon.words.set(0,t("中枢信标",.80f,.05f));beacon.words.set(2,t("特征码:123456789",.91f,.98f));
+        assertEquals(Kind.STOP,f.next(beacon).kind);
+        beacon.words.remove(2);assertEquals(Kind.WAIT,f.next(beacon).kind);
+        assertTrue(f.recovering());assertFalse(f.finished());assertEquals(0,f.reserved());
     }
     private Screen lootOffer(int balance) {
         Screen s=result(balance,true);s.words.remove(0);return s;

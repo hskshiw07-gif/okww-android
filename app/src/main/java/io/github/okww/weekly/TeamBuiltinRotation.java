@@ -9,6 +9,7 @@ import static io.github.okww.weekly.CombatTouchLayout.Control.*;
 
 /** Character-specific control flows; usable in any identified team, not a fixed three-character script. */
 final class TeamBuiltinRotation {
+    private static final class FieldLimit extends IllegalStateException {}
     static final Set<String> CHARACTERS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList("ShoreKeeper", "YangYangSp", "Aemeath")));
     enum Feature { AEMEATH_LIB2, AEMEATH_E1, AEMEATH_E2, AEMEATH_HUMAN_HEAVY }
     interface Port extends BuiltinRotation.Port {
@@ -23,11 +24,14 @@ final class TeamBuiltinRotation {
         boolean longAction() throws Exception;
         void holdAttack(boolean down) throws Exception; // Continuous pointer identity, not repeated short holds; up must survive cancellation.
         void refresh() throws Exception;
+        // Polling may reuse a still-fresh observation; explicit refresh always captures a new one.
+        default void poll() throws Exception { refresh(); }
         long realTimeMs();
         void markSupportBuff() throws Exception;
         boolean breakAction() throws Exception;
         void cycleSleep(long realCycleStartedAt) throws Exception; // Check break action, then pad the source's 100ms cycle.
         default void normalClick() throws Exception { normalAttack(90); }
+        boolean enhancedResonance(long timeout,long minimumAnimation)throws Exception;
     }
     private final String character;
     private long lastHeavy = -1;
@@ -42,11 +46,14 @@ final class TeamBuiltinRotation {
     void run(Port port) throws Exception {
         check(port);
         long wallStart = port.realTimeMs();
-        switch (character) {
+        try { switch (character) {
             case "ShoreKeeper" -> shoreKeeper(port);
             case "YangYangSp" -> yangYangSp(port, wallStart);
             case "Aemeath" -> aemeath(port, wallStart);
             default -> throw new IllegalStateException("未注册内置轴");
+        }} catch (FieldLimit limit) {
+            // A verified field that reaches its wall deadline yields to the team.
+            // Hold helpers release in finally; other failures still abort the task.
         }
         check(port); port.switchNext();
     }
@@ -83,7 +90,7 @@ final class TeamBuiltinRotation {
                 } else if (!echoUsed) {
                     resonanceSince = -1; echoUsed = p.cast(ECHO);
                 } else resonanceSince = -1;
-                p.pause(50); p.refresh();
+                p.pause(50); p.poll();
             }
         } finally { p.holdAttack(false); }
         p.pause(100);
@@ -91,7 +98,7 @@ final class TeamBuiltinRotation {
 
     private void aemeath(Port p, long wallStart) throws Exception {
         boolean mustLib2 = p.allTeammateBuffs() && p.hasIntro();
-        if (!mustLib2 && p.hasSubDpsTeammate()) {
+        if (!mustLib2) {
             if (heavy(p)) p.pause(300);
             return;
         } else if (p.hasIntro()) p.normalAttack(2100);
@@ -109,7 +116,7 @@ final class TeamBuiltinRotation {
             boolean action = p.cast(LIBERATION);
             if (action) lib2 |= isLib2;
             else if (p.feature(Feature.AEMEATH_E1) || p.feature(Feature.AEMEATH_E2)) {
-                if (p.cast(RESONANCE)) { enhanced = true; p.cast(ECHO); p.refresh(); }
+                if (p.enhancedResonance(1500,500)) { enhanced = true; p.cast(ECHO); p.refresh(); }
                 isLib2 = p.feature(Feature.AEMEATH_LIB2);
                 if (p.cast(LIBERATION)) lib2 |= isLib2;
                 action = true;
@@ -119,7 +126,7 @@ final class TeamBuiltinRotation {
                 if (p.longAction()) start = p.activeTimeMs();
                 else if (!((p.hasIntro() && !enhanced) || (mustLib2 && !lib2))) return;
             }
-            p.cycleSleep(cycleStartedAt); p.refresh();
+            p.cycleSleep(cycleStartedAt); p.poll();
         }
     }
 
@@ -146,7 +153,7 @@ final class TeamBuiltinRotation {
     }
     private static void bounded(Port p, long wallStart) throws Exception {
         check(p);
-        if (elapsed(p.realTimeMs(), wallStart) >= 30000) throw new IllegalStateException("单次角色轴超过30秒，停止并释放触控");
+        if (elapsed(p.realTimeMs(), wallStart) >= 30000) throw new FieldLimit();
     }
     private static void check(Port p) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException();

@@ -12,6 +12,8 @@ final class MobileSkillFeatures {
     private final List<PortraitMatcher.Template> templates=new ArrayList<>();
     private final MobileToolHud tools;
     final ChisaHud chisa;
+    final PrioritySkillHud priority;
+    final HiyukiHud hiyuki;
     MobileSkillFeatures(AssetManager assets) throws Exception {
         List<PortraitMatcher.Template> nonLevitator=new ArrayList<>();
         for(String file:assets.list("combat-features")) {
@@ -26,7 +28,10 @@ final class MobileSkillFeatures {
                 } finally {image.recycle();}
             }
         }
-        if(templates.size()!=6)throw new IllegalStateException("战斗特征资源缺失");
+        if(templates.size()!=12)throw new IllegalStateException("战斗特征资源缺失");
+        priority=new PrioritySkillHud(templates);
+        hiyuki=new HiyukiHud(load(assets,"priority-mobile/hiyuki-normal-forte.png"),
+                load(assets,"priority-mobile/hiyuki-liberated-forte.png"));
         try(InputStream in=assets.open("galbrena-mobile/non-levitator.png")) {
             Bitmap image=BitmapFactory.decodeStream(in);
             if(image==null)throw new IllegalStateException("手机工具状态模板缺失");
@@ -53,24 +58,18 @@ final class MobileSkillFeatures {
         return tools.knownNonLevitator(frame);
     }
     boolean aemeath(PortraitMatcher.Pixels p,TeamBuiltinRotation.Feature feature) {
-        String name;int cx,cy;
+        String name;CombatTouchLayout.Control control;
         switch(feature) {
-            case AEMEATH_LIB2 -> {name="aemeath_lib2";cx=1659;cy=841;}
-            case AEMEATH_E1 -> {name="aemeath_e1";cx=1780;cy=933;}
-            case AEMEATH_E2 -> {name="aemeath_e2";cx=1780;cy=933;}
-            case AEMEATH_HUMAN_HEAVY -> {name="aemeath_human_heavy";cx=1951;cy=825;}
+            case AEMEATH_LIB2 -> {name="aemeath_lib2";control=CombatTouchLayout.Control.LIBERATION;}
+            case AEMEATH_E1 -> {name="aemeath_e1";control=CombatTouchLayout.Control.RESONANCE;}
+            case AEMEATH_E2 -> {name="aemeath_e2";control=CombatTouchLayout.Control.RESONANCE;}
+            case AEMEATH_HUMAN_HEAVY -> {name="aemeath_human_heavy";control=CombatTouchLayout.Control.ATTACK;}
             default -> throw new IllegalArgumentException("未知内置特征");
         }
-        return score(p,name,cx-65,cy-65,cx+65,cy+65)>=.78;
+        return priority.controlScore(p,name,control)>=.78;
     }
     boolean normalTargetIndicator(PortraitMatcher.Pixels p) {
-        return Math.max(score(p,"has_target",535,945,620,1025),score(p,"no_target",535,945,620,1025))>=.75;
-    }
-    private double score(PortraitMatcher.Pixels frame,String name,int l,int t,int r,int b) {
-        List<PortraitMatcher.Template> selected=new ArrayList<>();for(PortraitMatcher.Template template:templates)if(template.character.equals(name))selected.add(template);
-        if(selected.isEmpty())throw new IllegalStateException("内置特征缺失："+name);
-        double best=-1;
-        for(double scale:new double[]{.8,1,1.2,1.4,1.6})best=Math.max(best,PortraitMatcher.match(frame,selected,l,t,r,b,scale).score);
-        return best;
+        return Math.max(PrioritySkillHud.score(p,templates,"has_target",535,945,620,1025),
+                PrioritySkillHud.score(p,templates,"no_target",535,945,620,1025))>=.75;
     }
 }

@@ -23,7 +23,12 @@ public class TestEnvironmentTest {
         SharedPreferences on=settings(Map.of(TestEnvironment.KEY,true)),off=settings(Map.of());
         for(AutomationTask task:AutomationTask.values()){
             TestEnvironment.requireSupported(off,true,task);TestEnvironment.requireSupported(on,false,task);
-            if(task==AutomationTask.REDEEM){TestEnvironment.requireSupported(on,true,task);assertTrue(TestEnvironment.replay(on,task));}
+            if(task==AutomationTask.REDEEM||task==AutomationTask.DAILY){
+                TestEnvironment.requireSupported(on,true,task);
+                assertEquals(task==AutomationTask.REDEEM,TestEnvironment.replay(on,task));
+                assertEquals(task==AutomationTask.DAILY,TestEnvironment.dailyReplay(on,task));
+                assertFalse(TestEnvironment.dailyReplay(off,task));
+            }
             else{assertFalse(TestEnvironment.replay(on,task));assertThrows(IllegalStateException.class,()->TestEnvironment.requireSupported(on,true,task));}
         }
     }

@@ -32,6 +32,9 @@ public class TeamBuiltinRotationTest {
             return features.contains(f);
         }
         public boolean longAction(){return longAction;}
+        public boolean enhancedResonance(long timeout,long minimumAnimation){
+            assertEquals(1500,timeout);assertEquals(500,minimumAnimation);return cast(RESONANCE);
+        }
         public void holdAttack(boolean down){
             events.add(down?"down":"up"); held=down;
             if(down){heavyAttempts++;if(failHeld)throw new IllegalStateException("hold failed");}
@@ -86,10 +89,41 @@ public class TeamBuiltinRotationTest {
         new TeamBuiltinRotation("YangYangSp").run(p);
         assertEquals(1,p.liberationCasts);assertEquals(10100,p.real);assertFalse(p.held);
     }
-    @Test public void frozenClockHitsWallTimeoutAndAlwaysReleasesHold() {
+    @Test public void frozenClockYieldsAtWallDeadlineAfterReleasingHold() throws Exception {
         Port p=new Port();p.freeze=true;
+        new TeamBuiltinRotation("YangYangSp").run(p);
+        assertEquals(30000,p.real);assertFalse(p.held);
+        assertEquals("up",p.events.get(p.events.size()-2));assertEquals("switch",p.events.get(p.events.size()-1));
+    }
+    @Test public void aemeathFrozenClockAndRepeatedHeavyResetYieldWithoutStoppingDaily() throws Exception {
+        for(boolean repeatedHeavy:new boolean[]{false,true}){
+            Port p=new Port(){
+                @Override public boolean feature(TeamBuiltinRotation.Feature feature){
+                    if(feature==AEMEATH_HUMAN_HEAVY&&repeatedHeavy)return !held;
+                    return super.feature(feature);
+                }
+            };
+            p.freeze=!repeatedHeavy;p.intro=p.buffs=true;
+            new TeamBuiltinRotation("Aemeath").run(p);
+            assertTrue(p.real>=30000);assertTrue(p.real<31500);assertFalse(p.held);
+            assertEquals(1,java.util.Collections.frequency(p.events,"switch"));
+            assertEquals(0,p.liberationCasts);
+        }
+    }
+    @Test public void deadlineNeverSuppressesLostCombatOrFailedRelease() {
+        for(boolean releaseFailure:new boolean[]{false,true}){
+            Port p=new Port(){
+                @Override public void checkCombat(){super.checkCombat();if(real>=30000)throw new IllegalStateException("lost at deadline");}
+            };
+            p.freeze=true;p.failRelease=releaseFailure;
+            assertThrows(IllegalStateException.class,()->new TeamBuiltinRotation("YangYangSp").run(p));
+            assertFalse(p.held);assertFalse(p.events.contains("switch"));
+        }
+        Port p=new Port(){@Override public void checkCombat(){super.checkCombat();if(real>30000)throw new IllegalStateException("lost after deadline");}
+            @Override public void holdAttack(boolean down){super.holdAttack(down);if(!down)advance(1);}};
+        p.freeze=true;
         assertThrows(IllegalStateException.class,()->new TeamBuiltinRotation("YangYangSp").run(p));
-        assertEquals(30000,p.real);assertFalse(p.held);assertFalse(p.events.contains("switch"));
+        assertFalse(p.held);assertFalse(p.events.contains("switch"));
     }
     @Test public void lostCombatDuringHoldIsReleasedBeforeErrorEscapes() {
         Port p=new Port(){@Override public void refresh(){dead=true;}};
@@ -103,13 +137,13 @@ public class TeamBuiltinRotationTest {
             assertFalse(p.held);assertEquals("up",p.events.get(p.events.size()-1));assertFalse(p.events.contains("switch"));
         }
     }
-    @Test public void aemeathWaitsForIntroOnlyWhenSubDpsPresent() throws Exception {
-        Port p=new Port();p.subDps=true;
-        new TeamBuiltinRotation("Aemeath").run(p);
-        assertEquals(java.util.Arrays.asList("switch"),p.events);
-        Port doubleMain=new Port();doubleMain.allowLib=true;
-        new TeamBuiltinRotation("Aemeath").run(doubleMain);
-        assertEquals(java.util.Arrays.asList("LIBERATION","switch"),doubleMain.events);
+    @Test public void aemeathWithoutBuffedIntroFastSwitchesInAnyTeamLikePcDoPerform() throws Exception {
+        for(int flags=0;flags<8;flags++){
+            if((flags&3)==3)continue;
+            Port p=new Port();p.intro=(flags&1)!=0;p.buffs=(flags&2)!=0;p.subDps=(flags&4)!=0;p.allowLib=true;
+            new TeamBuiltinRotation("Aemeath").run(p);
+            assertEquals(java.util.Arrays.asList("switch"),p.events);
+        }
     }
     @Test public void aemeathBuffedIntroRequiresEnhancedSkillAndSecondLiberation() throws Exception {
         Port p=new Port(){@Override public boolean cast(CombatTouchLayout.Control c){
@@ -123,19 +157,23 @@ public class TeamBuiltinRotationTest {
         assertEquals(java.util.Arrays.asList("normal:2100","LIBERATION","RESONANCE","ECHO","frame","LIBERATION","switch"),p.events);
     }
     @Test public void failedEnhancedSkillDoesNotClaimSuccessOrCastEcho() throws Exception {
-        Port p=new Port();p.intro=true;p.features.add(AEMEATH_E1);
+        Port p=new Port();p.intro=p.buffs=true;p.features.add(AEMEATH_E1);
         new TeamBuiltinRotation("Aemeath").run(p);
         assertEquals(0,p.resonanceCasts);assertFalse(p.events.contains("ECHO"));assertTrue(p.real>=12000);
     }
     @Test public void aemeathFallbackUsesOneClickThenCycleAndFreshFrameNotDurationLoop() {
         Port p=new Port(){
-            @Override public void normalAttack(long ms){throw new AssertionError("single click entered duration loop");}
+            @Override public void normalAttack(long ms){
+                if(ms==2100){advance(ms);return;} // Original intro precedes the fallback loop.
+                throw new AssertionError("single click entered duration loop");
+            }
             @Override public void normalClick(){checkCombat();events.add("click");advance(65);}
             @Override public void refresh(){super.refresh();dead=true;}
         };
+        p.intro=p.buffs=true;
         assertThrows(IllegalStateException.class,()->new TeamBuiltinRotation("Aemeath").run(p));
         assertEquals(java.util.Arrays.asList("LIBERATION","click","frame"),p.events);
-        assertEquals(100,p.real);assertEquals(100,p.active);
+        assertEquals(2200,p.real);assertEquals(2200,p.active);
         assertFalse(p.held);assertFalse(p.events.contains("switch"));
     }
     @Test public void singleClickDefaultRetainsExistingFakePortCompatibility() throws Exception {

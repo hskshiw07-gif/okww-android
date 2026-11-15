@@ -17,14 +17,15 @@ public class MobileBuiltinWiringTest {
         assertTrue(PriorityBuiltinRotation.Port.class.isAssignableFrom(TacetCombatPort.class));
     }
     @Test public void entryReportsEveryUncalibratedTeamMemberRatherThanOnlyFirstOne() {
-        String message=TacetCombatPort.entryProblem(Arrays.asList("Chisa","Hsin","Hiyuki"));
-        for(String name:new String[]{"Hsin","Hiyuki"})assertTrue(message.contains(name));
+        String message=TacetCombatPort.entryProblem(Arrays.asList("Chisa","Phrolova","Qingxiao"));
+        for(String name:new String[]{"Phrolova","Qingxiao"})assertTrue(message.contains(name));
         assertTrue(message.contains("手机"));
         assertEquals("",TacetCombatPort.entryProblem(Arrays.asList("Galbrena","YangYangSp","ShoreKeeper")));
         assertEquals("",TacetCombatPort.entryProblem(Arrays.asList("Galbrena","YangYangSp","Chisa")));
+        assertEquals("",TacetCombatPort.entryProblem(Arrays.asList("Hiyuki","Aemeath","Hsin")));
     }
     @Test public void offlineWiringNeverPretendsSpecialStateReadersAreCalibrated() {
-        for(String name:new String[]{"Phrolova","Hsin","Hiyuki","Qingxiao"})
+        for(String name:new String[]{"Phrolova","Qingxiao"})
             assertFalse(name,TacetCombatPort.missingCalibration(name).isEmpty());
         assertFalse(TacetCombatPort.missingCalibration(null).isEmpty());
     }

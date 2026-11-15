@@ -21,10 +21,15 @@ final class PortraitMatcher {
         final String character;
         final Pixels pixels;
         final int sourceHeight;
+        final boolean nativeSize;
         final double[] normalized;
         Template(String character, Pixels pixels, int sourceHeight) {
+            this(character,pixels,sourceHeight,false);
+        }
+        Template(String character, Pixels pixels, int sourceHeight, boolean nativeSize) {
             if (character == null || pixels == null || sourceHeight <= 0) throw new IllegalArgumentException("头像模板异常");
             this.character = character; this.pixels = pixels; this.sourceHeight = sourceHeight;
+            this.nativeSize=nativeSize;
             normalized = vector(pixels, 0, 0, pixels.width, pixels.height);
         }
     }
@@ -57,7 +62,7 @@ final class PortraitMatcher {
 
     static List<Template> grayscaleTemplates(List<Template> templates) {
         List<Template> result=new ArrayList<>();
-        for(Template template:templates)result.add(new Template(template.character,grayscale(template.pixels),template.sourceHeight));
+        for(Template template:templates)result.add(new Template(template.character,grayscale(template.pixels),template.sourceHeight,template.nativeSize));
         return result;
     }
 
@@ -80,7 +85,7 @@ final class PortraitMatcher {
         Map<String, Match> best = new HashMap<>();
         for (Template template : templates) {
             // shortcut: avatar UI scale 1.25 was observed on Xiaomi 13 Pro; other HUD scales need calibration.
-            double scale = frame.height / (double) template.sourceHeight * uiScale;
+            double scale = frame.height / (double) template.sourceHeight * (template.nativeSize?1:uiScale);
             int width = (int) Math.round(template.pixels.width * scale), height = (int) Math.round(template.pixels.height * scale);
             if (width < GRID_X || height < GRID_Y || width > right - left || height > bottom - top) continue;
             double[] normalized = template.normalized;
