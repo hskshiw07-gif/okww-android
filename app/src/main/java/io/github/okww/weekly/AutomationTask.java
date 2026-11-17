@@ -1,6 +1,8 @@
 package io.github.okww.weekly;
 
 enum AutomationTask {
+    ECHO_FARM("刷4C声骸", "FarmEchoTask", "echo-farm-state.json",
+            "离线试验版：填首领血条上的完整名称，在首领附近未开战时从浮窗开始。读取当前编队，确认首领后开打；只点近身的「吸收」，随后原地等同一首领重现。不会领取宝箱或消耗波片。没有真机标定，尚不支持自动传送、跑图、主动找掉落或切换副本。浮窗隐藏时可从采集通知停止。"),
     REDEEM("单号兑换", "RedeemCodeTask", "redeem-state.json",
             "开发待真机验收：只为当前新鲜核验UID兑换已主动启用的礼包码，再检查邮件。填码会覆盖系统剪贴板为当前兑换码，并点击游戏粘贴图标，不保存原剪贴板。不会切号、购买或消耗波片；提交前保存记录，明确游戏结果才记成功，结果未知停止并保留待核验。"),
     MULTI_REDEEM("多号兑换", "MultiAccountRedeemCodeTask", "multi-redeem-state.json",

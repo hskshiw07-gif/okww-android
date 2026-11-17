@@ -37,6 +37,7 @@ public final class CaptureService extends Service {
     private int width, height;
     private volatile boolean closing;
     private final Object lock = new Object();
+    private final CaptureDemand demand = new CaptureDemand();
 
     @Override public int onStartCommand(Intent intent, int flags, int id) {
         if (intent == null || "STOP".equals(intent.getAction())) { stopSelf(); return START_NOT_STICKY; }
@@ -76,6 +77,7 @@ public final class CaptureService extends Service {
             reader.setOnImageAvailableListener(source -> {
                 try (Image image = source.acquireLatestImage()) {
                     if (image == null || closing || SystemClock.elapsedRealtime() - capturedAt < 200) return;
+                    if (!demand.take()) return;
                     Image.Plane plane = image.getPlanes()[0];
                     ByteBuffer buffer = plane.getBuffer();
                     int paddedWidth = plane.getRowStride() / plane.getPixelStride();
@@ -108,8 +110,10 @@ public final class CaptureService extends Service {
             getSystemService(WindowManager.class).getDefaultDisplay().getRealMetrics(metrics);
             if (metrics.widthPixels != width || metrics.heightPixels != height)
                 throw new IllegalStateException("屏幕方向或尺寸已变化，请重新授权采集");
-            if (latest == null || frameTimestampNanos <= after || SystemClock.elapsedRealtime() - capturedAt > 1500)
+            if (latest == null || frameTimestampNanos <= after || SystemClock.elapsedRealtime() - capturedAt > 1500) {
+                demand.request();
                 throw new IllegalStateException("暂无新鲜画面，请重新授权屏幕采集");
+            }
             return latest.copy(Bitmap.Config.ARGB_8888, false);
         }
     }

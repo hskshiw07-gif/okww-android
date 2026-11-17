@@ -44,7 +44,10 @@ public class DailyTacetTest {
         return fighting(memory,240);
     }
     private DailyTacet fighting(Memory memory,int ordinary) throws Exception {
-        DailyTacet f=new DailyTacet();f.attachLedger(new DailyStaminaLedger(memory,"123456789",NOW));f.freezePlan(ordinary,0);f.selected();f.entryTeamConfirmed();
+        return fighting(memory,ordinary,false);
+    }
+    private DailyTacet fighting(Memory memory,int ordinary,boolean singleClaimOnly) throws Exception {
+        DailyTacet f=new DailyTacet(singleClaimOnly);f.attachLedger(new DailyStaminaLedger(memory,"123456789",NOW));f.freezePlan(ordinary,0);f.selected();f.entryTeamConfirmed();
         f.applied(f.next(screen(t("开启挑战",.86f,.91f),t("快速编队",.73f,.91f))));
         assertEquals("daily-tacet-combat",f.next(CombatHudTest.battle()).scene);return f;
     }
@@ -131,6 +134,22 @@ public class DailyTacetTest {
     private Screen outside(String uid) {
         return screen(t("Lv.90",.58f,.937f),t("31443/31443",.495f,.937f),t("65ms",.92f,.116f),
                 t("特征码:"+uid,.914f,.98f));
+    }
+    @Test public void ownedChestAfterCombatHandoffNeedsNewMatchingFramesAndNeverReserves() throws Exception {
+        DailyTacet f=fighting(new Memory());
+        Screen post=outside("000000000");
+        var marker=new PortraitMatcher.Match("treasure",.873,-1,.764f,.664f);
+        assertEquals("daily-tacet-loading",f.next(post).scene);
+        assertFalse(f.observeTreasure(CombatHudTest.battle(),marker,100,100));
+        assertFalse(f.observeTreasure(post,marker,200,200));
+        assertFalse(f.observeTreasure(post,marker,200,300));
+        assertFalse(f.observeTreasure(post,marker,400,2000));
+        assertFalse(f.observeTreasure(post,marker,2100,2100));
+        assertFalse(f.observeTreasure(outside("111111111"),marker,2200,2200));
+        assertFalse(f.observeTreasure(post,marker,2300,2300));
+        assertTrue(f.observeTreasure(post,marker,2500,2500));
+        assertEquals("daily-tacet-treasure",f.next(post).scene);
+        assertEquals(0,f.spent());assertEquals(0,f.reserved());assertFalse(f.finished());
     }
     private void cancelAndExit(DailyTacet f) {
         Action cancel=f.next(revival("000000000"));
@@ -544,6 +563,60 @@ public class DailyTacetTest {
         Action claim=f.next(offer);assertEquals("daily-tacet-claim-"+cost,claim.scene);
         f.beforeInput(claim,NOW);assertEquals(cost,f.reserved());f.applied(claim);
         assertEquals("daily-tacet-settle-wait",f.next(result(after,false)).scene);
+    }
+    @Test public void repeatResumesFromTwoFreshOwnedCombatFramesWithoutObjective() throws Exception {
+        Screen battle=CombatHudTest.repeatBattleWithoutObjective();
+        DailyTacet first=new DailyTacet();first.attachLedger(new DailyStaminaLedger(new Memory(),"123456789",NOW));
+        first.freezePlan(240,0);first.selected();first.entryTeamConfirmed();
+        first.applied(first.next(screen(t("开启挑战",.86f,.91f),t("快速编队",.73f,.91f))));
+        assertEquals("daily-tacet-loading",first.next(battle,false,100,120).scene);
+        assertEquals("daily-tacet-loading",first.next(battle,false,200,220).scene);
+
+        DailyTacet f=fighting(new Memory());
+        payAndSettle(f,doubleOffer(240),120,120);
+        Action repeat=f.next(result(120,false));assertEquals("daily-tacet-repeat",repeat.scene);
+        f.beforeInput(repeat,NOW);f.applied(repeat);
+        assertEquals("daily-tacet-loading",f.next(battle,false,100,120).scene);
+        assertEquals("daily-tacet-loading",f.next(battle,false,100,130).scene);
+        Screen other=CombatHudTest.repeatBattleWithoutObjective();other.words.set(3,t("特征码:111111111",.914f,.98f));
+        assertEquals("daily-tacet-loading",f.next(other,false,200,220).scene);
+        assertEquals("daily-tacet-loading",f.next(battle,false,300,1901).scene);
+        assertEquals("daily-tacet-loading",f.next(battle,false,2000,2020).scene);
+        assertEquals("daily-tacet-combat",f.next(battle,false,2400,2420).scene);
+        assertEquals(120,f.spent());assertEquals(0,f.reserved());
+    }
+    @Test public void developmentRequiresVerifiedSingleQuoteEvenWhenDoubleIsAffordable() throws Exception {
+        Memory memory=new Memory();DailyTacet f=fighting(memory,240,true);
+        Screen onlyDouble=doubleOffer(240);onlyDouble.words.remove(6);onlyDouble.words.remove(5);
+        assertEquals("daily-tacet-price-wait",f.next(onlyDouble).scene);
+        Screen wrongSinglePrice=doubleOffer(240);wrongSinglePrice.words.set(6,t("120",.33f,.70f));
+        assertEquals("daily-tacet-price-wait",f.next(wrongSinglePrice).scene);
+        assertEquals(0,f.reserved());
+        payAndSettle(f,doubleOffer(240),60,180);
+        assertEquals("daily-tacet-repeat",f.next(result(180,false)).scene);
+        assertEquals(60,f.dailySpent());assertEquals(0,f.reserved());assertEquals(180,f.remainingPlan());
+        assertEquals(60,new DailyStaminaLedger(memory,"123456789",NOW).confirmed());
+    }
+    @Test public void lowWaveplateTestOpensAndCancelsPreviewThenExitsWithoutAnyLedgerWrite() throws Exception {
+        Memory memory=new Memory();
+        var ledger=new DailyStaminaLedger(memory,"123456789",NOW);
+        ledger.reserve(240,60,false,NOW);ledger.confirm(180);
+        String original=memory.value;
+        DailyTacet f=new DailyTacet(true);f.attachLedger(new DailyStaminaLedger(memory,"123456789",NOW));
+        f.freezeOrdinaryPlan(19);f.selected();f.entryTeamConfirmed();
+        assertTrue(f.previewOnly());assertEquals(0,f.remainingPlan());
+        Action start=f.next(screen(t("开启挑战",.86f,.91f),t("快速编队",.73f,.91f)));
+        assertEquals("daily-tacet-start",start.scene);f.beforeInput(start,NOW);f.applied(start);
+        assertEquals("daily-tacet-combat",f.next(CombatHudTest.battle()).scene);
+        Action open=f.next(dev38ClaimFrames()[0]);assertEquals("daily-tacet-open-claim",open.scene);f.applied(open);
+        Screen offer=dev38ClaimFrames()[4]; // Even if ordinary waveplates regenerate to 60, this run remains preview-only.
+        assertThrows(IllegalStateException.class,()->f.beforeInput(Action.tap("daily-tacet-claim-60",offer.one("单倍领取")),NOW));
+        Action cancel=f.next(offer);assertEquals("daily-tacet-preview-cancel",cancel.scene);assertEquals(Kind.BACK,cancel.kind);f.applied(cancel);
+        assertEquals(Kind.WAIT,f.next(offer).kind);
+        assertEquals("daily-tacet-preview-leave",f.next(dev38ClaimFrames()[0]).scene);
+        Action exit=f.next(exitPrompt("000000000"));assertEquals("daily-tacet-exit",exit.scene);f.applied(exit);
+        assertNull(f.next(outside("000000000")));assertTrue(f.finished());assertTrue(f.reason().contains("已验证"));
+        assertEquals(original,memory.value);assertEquals(0,f.spent());assertEquals(0,f.reserved());
     }
     @Test public void twoDoubleClaimsConsumeExactly240AndNeverSettleAnObservedSingleDeduction() throws Exception {
         Memory memory=new Memory();DailyTacet f=fighting(memory);

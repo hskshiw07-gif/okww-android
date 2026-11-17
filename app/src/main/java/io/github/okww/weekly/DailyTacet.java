@@ -9,9 +9,11 @@ import static io.github.okww.weekly.GardenRules.*;
 
 /** Scoped Tacet entry -> builtin combat -> reserve/verify explicit 60/120-waveplate claim -> repeat/exit. */
 final class DailyTacet {
-    enum Stage { ENTRY, LOADING, FIGHT, TREASURE, CLAIM, SETTLE, REPEAT, EXIT, RECOVER_EXIT, RECOVER_HEAL, DONE }
+    enum Stage { ENTRY, LOADING, FIGHT, TREASURE, CLAIM, PREVIEW_LEAVE, SETTLE, REPEAT, EXIT, RECOVER_EXIT, RECOVER_HEAL, DONE }
+    private final boolean singleClaimOnly;
     private Stage stage=Stage.ENTRY;
-    private boolean selected,entryTeam,claimOpened,retrySubmitted;
+    private boolean selected,entryTeam,claimOpened,retrySubmitted,reentrySubmitted;
+    private long reentryFrame=-1;
     private int failures,claims,balanceBefore=-1,lastBalance=-1,offerFrames,settleFrames,offerCost;
     private Integer candidateBalance;
     private Text offer;
@@ -28,6 +30,10 @@ final class DailyTacet {
     private int unhealedFrames,recoveryZooms;
     private boolean recoveryTravelSubmitted;
     private PortraitMatcher.Match recoveryNexus;
+    private PortraitMatcher.Match treasureCandidate;
+    private long lastTreasureFrame=-1;
+    DailyTacet(){this(false);}
+    DailyTacet(boolean singleClaimOnly){this.singleClaimOnly=singleClaimOnly;}
     void recoveryFrame(PortraitMatcher.Match nexus){recoveryNexus=nexus;}
     private void resetRecovery(){healedFrames=unhealedFrames=recoveryZooms=0;recoveryTravelSubmitted=false;recoveryNexus=null;}
     void selected(){selected=true;}
@@ -36,6 +42,20 @@ final class DailyTacet {
         if(!selected||stage!=Stage.FIGHT||battleUid==null||!battleUid.equals(uid)||reserved()!=0)
             throw new IllegalStateException("宝箱证据未归属本轮已观测战斗，保留现场与账本");
         stage=Stage.TREASURE;claimOpened=false;offer=null;offerFrames=settleFrames=0;candidateBalance=null;
+        treasureCandidate=null;
+    }
+    boolean observeTreasure(Screen screen,PortraitMatcher.Match marker,long captured,long now){
+        String uid=AccountDailyConfig.detectUid(screen);
+        if(!selected||stage!=Stage.FIGHT||battleUid==null||!battleUid.equals(uid)||reserved()!=0
+                ||marker==null||marker.score<.8||!TacetTreasureNavigation.postWorld(screen)
+                ||captured<=lastTreasureFrame||captured>now||now-captured>1500){
+            treasureCandidate=null;return false;
+        }
+        boolean stable=treasureCandidate!=null&&captured-lastTreasureFrame<=2500
+                &&Math.abs(marker.x-treasureCandidate.x)<=.025f&&Math.abs(marker.y-treasureCandidate.y)<=.025f;
+        lastTreasureFrame=captured;treasureCandidate=marker;
+        if(stable)treasureConfirmed(uid);
+        return stable;
     }
     boolean seekingTreasure(){return selected&&stage==Stage.TREASURE;}
     boolean finished(){return selected&&stage==Stage.DONE;}
@@ -110,8 +130,12 @@ final class DailyTacet {
     int reserved(){return ledger==null?0:ledger.reserved();}
     int dailySpent(){return ledger==null?0:ledger.confirmed();}
     boolean exhausted(){return ledger!=null&&(ledger.remaining()<60||plan!=null&&remainingPlan()<60);}
+    boolean needsPreview(int ordinary){return singleClaimOnly&&ordinary<DailyStaminaBudget.CLAIM_COST;}
+    boolean previewOnly(){return plan!=null&&plan.exchangeAmount==0&&needsPreview(plan.ordinaryBefore);}
+    private boolean hasBattleAllowance(){return hasAllowance()||previewOnly()&&reserved()==0;}
     private boolean hasAllowance(){return hasAllowance(60);}
-    private boolean hasAllowance(int cost){return ledger!=null&&funded()&&remainingPlan()>=cost&&ledger.remaining()>=cost&&reserved()==0;}
+    private boolean hasAllowance(int cost){return !previewOnly()&&(!singleClaimOnly||cost==DailyStaminaBudget.CLAIM_COST)
+            &&ledger!=null&&funded()&&remainingPlan()>=cost&&ledger.remaining()>=cost&&reserved()==0;}
     String stage(){return selected?stage.name():"NAVIGATION";}
     String reason(){return reason;}
     boolean recovering(){return stage==Stage.RECOVER_EXIT||stage==Stage.RECOVER_HEAL;}
@@ -124,7 +148,8 @@ final class DailyTacet {
     boolean consumeRecovered(){boolean result=recovered;recovered=false;return result;}
     void beforeInput(Action action,long now){
         if(action.scene.equals("daily-tacet-start")||action.scene.equals("daily-tacet-retry")||action.scene.equals("daily-tacet-repeat")){
-            if(!hasAllowance())throw new IllegalStateException("消费计划未就绪、额度已用尽或有未核销扣费，未开始战斗");
+            if(!hasBattleAllowance()||previewOnly()&&!action.scene.equals("daily-tacet-start"))
+                throw new IllegalStateException("测试预览不重复挑战，或消费计划与扣费账本不允许开始战斗");
             if(!ledger.day().equals(DailyStaminaLedger.gameDay(now)))throw new IllegalStateException("游戏日已变化，请重新核验账号与消费计划，未开始战斗");
             return;
         }
@@ -139,11 +164,12 @@ final class DailyTacet {
     void applied(Action action){
         if(pendingSettlement!=null)pendingSettlement.applied(action);
         switch(action.scene){
-            case "daily-tacet-start" -> stage=Stage.LOADING;
-            case "daily-tacet-retry" -> {failures++;retrySubmitted=true;stage=Stage.LOADING;}
+            case "daily-tacet-start" -> {stage=Stage.LOADING;reentrySubmitted=false;reentryFrame=-1;}
+            case "daily-tacet-retry" -> {failures++;retrySubmitted=true;stage=Stage.LOADING;reentrySubmitted=true;reentryFrame=-1;}
             case "daily-tacet-open-claim" -> claimOpened=true;
+            case "daily-tacet-preview-cancel" -> stage=Stage.PREVIEW_LEAVE;
             case "daily-tacet-claim-60", "daily-tacet-claim-120" -> {stage=Stage.SETTLE;offer=null;candidateBalance=null;settleFrames=0;}
-            case "daily-tacet-repeat" -> {stage=Stage.LOADING;claimOpened=false;offer=null;offerFrames=settleFrames=0;candidateBalance=null;balanceBefore=lastBalance=-1;}
+            case "daily-tacet-repeat" -> {stage=Stage.LOADING;reentrySubmitted=true;reentryFrame=-1;claimOpened=false;offer=null;offerFrames=settleFrames=0;candidateBalance=null;balanceBefore=lastBalance=-1;}
             case "daily-tacet-exit" -> stage=Stage.EXIT;
             case "daily-tacet-recover-cancel" -> {if(stage==Stage.FIGHT)recoveries++;stage=Stage.RECOVER_EXIT;resetRecovery();}
             case "daily-tacet-recover-exit" -> {stage=Stage.RECOVER_HEAL;resetRecovery();}
@@ -153,13 +179,38 @@ final class DailyTacet {
         }
     }
     Action next(Screen s){return next(s,false);}
-    Action next(Screen s,boolean partyFullyHealed){
+    Action next(Screen s,boolean partyFullyHealed){return next(s,partyFullyHealed,-1,-1);}
+    Action next(Screen s,boolean partyFullyHealed,long captured,long now){
+        long previousReentryFrame=reentryFrame;
+        reentryFrame=-1;
         PortraitMatcher.Match nexus=recoveryNexus;recoveryNexus=null;
         if(pendingSettlement!=null)return Action.waitFor("daily-pending-settlement","中断的领取仅核销，不重提、不启动战斗");
         if(!selected||stage==Stage.DONE)return null;
+        String uid=AccountDailyConfig.detectUid(s);
+        if(previewOnly()&&(stage==Stage.PREVIEW_LEAVE||stage==Stage.CLAIM&&claimOpened)){
+            if(uid==null)return Action.waitFor("daily-tacet-preview-wait","等待同账号画面再取消或退出，不提交扣费");
+            if(!uid.equals(battleUid)||reserved()!=0)return Action.stop("预览未归属本轮同账号战斗或有待核销扣费，未操作");
+            if(previewDialog(s)){
+                return stage==Stage.CLAIM?new Action(Kind.BACK,"daily-tacet-preview-cancel","测试到达领取预览，取消；不提交扣费",0,0)
+                        :Action.waitFor("daily-tacet-preview-wait","已取消一次，等待领取窗口关闭");
+            }
+            if(stage==Stage.PREVIEW_LEAVE){
+                Text exit=exitConfirmation(s);
+                if(exit!=null){
+                    reason="已验证到达并取消领奖预览，未消耗波片";
+                    return Action.tap("daily-tacet-exit",exit);
+                }
+                if(settlementPage(s)){
+                    reason="已验证到达并取消领奖预览，未消耗波片";
+                    return Action.tap("daily-tacet-exit",s.one("退出副本|离开副本",.22f,.72f,.52f,.94f));
+                }
+                if(TacetTreasureNavigation.postWorld(s)||TacetTreasureNavigation.interaction(s)!=null)
+                    return new Action(Kind.BACK,"daily-tacet-preview-leave","预览已关闭，打开退出副本提示",0,0);
+                return Action.waitFor("daily-tacet-preview-wait","等待关闭后的场景或明确退出提示，未领取");
+            }
+        }
         if(s.has("补充波片|兑换波片|结晶溶剂|使用结晶|购买|买药|确认解锁|使用药品|使用复苏"))return Action.stop("战斗或领奖期间不临时补充、不购买使用药品；备用资源仅由开战前专用流程核验");
         boolean revival=s.one("选择复苏物品",.24f,.16f,.36f,.23f)!=null;
-        String uid=AccountDailyConfig.detectUid(s);
         if(revival||recovering()){
             if(reserved()!=0)return Action.stop("死亡恢复仍有未核销扣费，保留账本并停止");
             if(battleUid==null||uid!=null&&!battleUid.equals(uid))return Action.stop("死亡恢复账号与本轮战斗不符，未操作");
@@ -175,11 +226,8 @@ final class DailyTacet {
             if(stage==Stage.RECOVER_EXIT){
                 if(world)stage=Stage.RECOVER_HEAL;
                 else {
-                    Text confirm=s.one("确认",.58f,.57f,.68f,.68f);
-                    if(confirm!=null&&s.one("提示",.28f,.28f,.34f,.36f)!=null
-                            &&s.one("确认离开",.44f,.43f,.56f,.53f)!=null
-                            &&s.one("重新挑战",.32f,.57f,.42f,.68f)!=null)
-                        return Action.tap("daily-tacet-recover-exit",confirm);
+                    Text confirm=exitConfirmation(s);
+                    if(confirm!=null)return Action.tap("daily-tacet-recover-exit",confirm);
                     Text leave=s.one("退出副本|离开副本",.22f,.72f,.52f,.94f);
                     if(leave!=null&&s.one("挑战失败",.32f,.12f,.68f,.42f)!=null)
                         return Action.tap("daily-tacet-recover-exit",leave);
@@ -224,17 +272,17 @@ final class DailyTacet {
         if(failure){
             if(reserved()!=0)return Action.stop("失败页仍有未核销扣费，不重试");
             if(stage==Stage.LOADING&&retrySubmitted)return Action.waitFor("daily-tacet-loading","已提交重试，等待离开失败页");
-            if(stage!=Stage.EXIT&&failures<2&&repeat!=null){
+            if(!previewOnly()&&stage!=Stage.EXIT&&failures<2&&repeat!=null){
                 if(!hasAllowance())return Action.stop("消费计划未冻结或剩余额度不足，不重新开启挑战");
                 return Action.tap("daily-tacet-retry",repeat);
             }
-            reason="连续三次挑战失败，停止刷取并继续免费奖励检查";
+            reason=previewOnly()?"测试战斗失败，未到达领奖预览，未消耗波片":"连续三次挑战失败，停止刷取并继续免费奖励检查";
             return leave==null?Action.waitFor("daily-tacet-exit-wait",reason):Action.tap("daily-tacet-exit",leave);
         }
         if(stage==Stage.EXIT)return leave==null?Action.waitFor("daily-tacet-exit-wait","等待退出无音区，不重复消费"):Action.tap("daily-tacet-exit",leave);
         Text interaction=TacetTreasureNavigation.interaction(s);
         if((stage==Stage.FIGHT||stage==Stage.TREASURE)&&interaction!=null){
-            if(battleUid==null||!battleUid.equals(uid)||!hasAllowance())
+            if(battleUid==null||!battleUid.equals(uid)||!hasBattleAllowance())
                 return Action.stop("近距离领奖交互未归属本轮已核验战斗或预算，未操作");
             stage=Stage.CLAIM;
         }
@@ -251,7 +299,7 @@ final class DailyTacet {
             Integer balance=balance(s);
             if(balance!=null)lastBalance=balance;
             if(stage==Stage.CLAIM){
-                Quote quote=balance==null||ledger==null?null:quote(s,balance);
+                Quote quote=balance==null||ledger==null||previewOnly()?null:quote(s,balance);
                 if(quote!=null){
                     if(!hasAllowance(quote.cost)||!ledger.canClaim(balance,quote.cost,false))return Action.stop("波片余额、冻结计划、每日预算或领取状态不符，未提交扣费");
                     boolean same=balance.equals(candidateBalance)&&offer!=null&&offerCost==quote.cost
@@ -268,7 +316,9 @@ final class DailyTacet {
                 if(interaction!=null)return Action.tap("daily-tacet-open-claim",interaction);
                 Text claim=s.one("领取奖励",.15f,.50f,.85f,.94f);
                 if(success&&!claimOpened&&claim!=null)return Action.tap("daily-tacet-open-claim",claim);
-                return Action.waitFor("daily-tacet-price-wait","等待明确同按钮费用与余额；额度够则优先双倍120，剩余60或无双倍才单倍");
+                return Action.waitFor("daily-tacet-price-wait",previewOnly()?"等待明确的领奖预览，只取消，不扣费"
+                        :singleClaimOnly?"等待明确的单倍领取按钮、60波片费用与余额"
+                        :"等待明确同按钮费用与余额；额度够则优先双倍120，剩余60或无双倍才单倍");
             }
             if(stage==Stage.SETTLE){
                 int submitted=reserved();
@@ -296,19 +346,35 @@ final class DailyTacet {
         Text start=s.one("开启挑战",.80f,.86f,.93f,.96f);
         if(start!=null&&s.one("快速[编骗]队",.65f,.86f,.78f,.96f)!=null){
             if(stage!=Stage.ENTRY)return Action.waitFor("daily-tacet-loading","已提交开启挑战，等待载入");
-            if(entryTeam&&!hasAllowance())return Action.stop("消费计划未冻结、额度不足或存在未核销扣费，未开启挑战");
+            if(entryTeam&&!hasBattleAllowance())return Action.stop("消费计划未冻结、额度不足或存在未核销扣费，未开启挑战");
             return entryTeam?Action.tap("daily-tacet-start",start):Action.waitFor("daily-tacet-team","再次核验副本出战三人，不沿用不同编队");
         }
         if(stage==Stage.LOADING||stage==Stage.FIGHT){
-            if(!hasAllowance())return Action.stop("战斗缺少有效冻结计划或剩余额度，停止并保留账本");
-            if(CombatHud.tacetCombat(s)){
+            if(!hasBattleAllowance())return Action.stop("战斗缺少有效冻结计划或剩余额度，停止并保留账本");
+            // On re-challenge the game can omit the objective even though the next battle is running.
+            if(stage==Stage.LOADING&&reentrySubmitted&&battleUid!=null&&battleUid.equals(uid)
+                    &&captured>=0&&captured<=now&&now-captured<=1500&&CombatHud.tacetReentry(s)
+                    &&captured>previousReentryFrame)reentryFrame=captured;
+            if(CombatHud.tacetCombat(s)||reentryFrame>=0&&previousReentryFrame>=0&&reentryFrame-previousReentryFrame<=2500){
                 if(battleUid!=null&&!battleUid.equals(uid))return Action.stop("战斗账号变化，停止并保留账本");
-                battleUid=uid;stage=Stage.FIGHT;retrySubmitted=false;
+                battleUid=uid;stage=Stage.FIGHT;retrySubmitted=reentrySubmitted=false;reentryFrame=-1;
                 return Action.waitFor("daily-tacet-combat","无音区战斗中，执行已核验角色的内置轴");
             }
             return Action.waitFor("daily-tacet-loading","等待无音区目标、倒计时和战斗HUD载入");
         }
         return Action.waitFor("daily-tacet-entry-wait","等待副本完整标题与按钮，不依据缺字画面操作");
+    }
+    private static boolean previewDialog(Screen s){
+        return (s.hasOne("领取奖励",.26f,.28f,.36f,.35f)
+                &&s.hasOne(".*消耗结晶波片.*领取.*奖励.*",.33f,.43f,.68f,.53f))
+                ||(s.hasOne("补充结晶波片",.24f,.16f,.34f,.23f)
+                &&s.hasOne("请选择补充方式",.44f,.24f,.55f,.31f)
+                &&s.hasOne("取消",.32f,.68f,.37f,.76f));
+    }
+    private static Text exitConfirmation(Screen s){
+        return s.hasOne("提示",.28f,.28f,.34f,.36f)
+                &&s.hasOne("确认离开",.44f,.43f,.56f,.53f)
+                &&s.hasOne("重新挑战",.32f,.57f,.42f,.68f)?s.one("确认",.58f,.57f,.68f,.68f):null;
     }
     private static boolean arenaLabels(Screen s){
         return s.one(".*清理无[音普]区.*残[象像].*",.02f,.16f,.40f,.42f)!=null
@@ -320,6 +386,7 @@ final class DailyTacet {
     }
     private Quote quote(Screen s,int balance){
         Text single=s.one("单倍领取",.15f,.45f,.78f,.90f);
+        if(singleClaimOnly)return singleQuote(s,single);
         Text twice=s.one("双倍领取",.15f,.45f,.78f,.90f);
         if(twice!=null){
             // An ambiguous or changed double price is unknown, never permission to silently fall back to single.
@@ -330,7 +397,11 @@ final class DailyTacet {
             for(Text t:s.words)if(t.x()>=.15f&&t.x()<=.78f&&t.y()>=.45f&&t.y()<=.90f
                     &&(t.value.matches("双.*(?:领|取).*")||t.value.equals("120")))return null;
         }
-        return single!=null&&sameButtonCost(s,single)==60?new Quote(single,60):null;
+        return singleQuote(s,single);
+    }
+    private static Quote singleQuote(Screen s,Text button){
+        return button!=null&&sameButtonCost(s,button)==DailyStaminaBudget.CLAIM_COST
+                ?new Quote(button,DailyStaminaBudget.CLAIM_COST):null;
     }
     static Integer balance(Screen s){
         Set<Integer> values=new HashSet<>();Integer header=DailyRules.waveplates(s);if(header!=null)values.add(header);

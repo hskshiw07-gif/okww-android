@@ -18,6 +18,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
+import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -160,17 +161,22 @@ public final class MainActivity extends Activity {
     private void tasksPage() {
         taskPicker();
         AutomationTask selected = selectedTask();
+        boolean echo=selected==AutomationTask.ECHO_FARM;
         boolean redeem=selected==AutomationTask.REDEEM||selected==AutomationTask.MULTI_REDEEM;
         LinearLayout columns = row(); columns.setBaselineAligned(false);
         LinearLayout task = card();
-        task.addView(text(redeem?"礼包码迁移验证  /  REDEEM":selected == AutomationTask.GARDEN ? "周常任务  /  GARDEN" : "每日迁移验证  /  DAILY", 10, ACCENT, true)); space(task, 9);
-        task.addView(text(redeem?selected.title:selected == AutomationTask.MULTI_DAILY ? "多账号 · 无音区每日" : selected == AutomationTask.GARDEN ? "幻梦游园 · 狂想" : "每日全流程 · 无音区与免费奖励", 22, TEXT, true));
-        TextView description = text(TestEnvironment.enabled(preferences())?(selected==AutomationTask.DAILY?TestEnvironment.DAILY_DESCRIPTION:selected==AutomationTask.REDEEM?"测试环境 · 每次从头获取公开码 → 新合成测试码输入/提交 → 核验结果 → 检查邮件。\n测试记录与真实记录隔离；无效测试码不代表奖励。设置中可关闭测试环境，恢复正常流程。":"测试环境已开启，但此任务尚未适配测试重跑，自动执行会停止。\n请先在设置关闭测试环境；真实波片、领奖及待核验记录始终保留。")
+        task.addView(text(echo?"离线适配 · 未经真机验证":redeem?"礼包码迁移验证  /  REDEEM":selected == AutomationTask.GARDEN ? "周常任务  /  GARDEN" : "每日迁移验证  /  DAILY", 10, ACCENT, true)); space(task, 9);
+        task.addView(text(echo||redeem?selected.title:selected == AutomationTask.MULTI_DAILY ? "多账号 · 无音区每日" : selected == AutomationTask.GARDEN ? "幻梦游园 · 狂想" : "每日全流程 · 无音区与免费奖励", 22, TEXT, true));
+        TextView description = text(echo?selected.confirmation:TestEnvironment.enabled(preferences())?(selected==AutomationTask.DAILY?TestEnvironment.DAILY_DESCRIPTION:selected==AutomationTask.REDEEM?"测试环境 · 每次从头获取公开码 → 新合成测试码输入/提交 → 核验结果 → 检查邮件。\n测试记录与真实记录隔离；无效测试码不代表奖励。设置中可关闭测试环境，恢复正常流程。":"测试环境已开启，但此任务尚未适配测试重跑，自动执行会停止。\n请先在设置关闭测试环境；真实波片、领奖及待核验记录始终保留。")
                 :redeem?"正常环境 · 仅兑换已主动启用的真实礼包码，已处理码按记录跳过，再检查邮件。\n不生成测试码，不重复提交待核验记录。":selected == AutomationTask.GARDEN
                 ? "自动选卡、处理奇遇、推进阶段与结算重试。\n核验周游历值 6000 后结束。"
                 : selected == AutomationTask.MULTI_DAILY ? "当前账号优先，其余按计划顺序；登录后复核 UID，每号重新识别队伍。\n按游戏日保存完成/待完成/失败记录；手机切号流程尚待真机验证。"
                 : "启动游戏 → 账号与队伍 → 无音区 → 活跃奖励 → 邮件 → 先约电台。\n九人内置轴已接执行分派；未标定的专属读数会在开战前列出，不代表九人都可实战。仅用普通波片最多240，不补差不兑换，双倍优先；未核验不记完成。", 12, MUTED, false);
         description.setLineSpacing(d(3), 1); space(task, 7); task.addView(description);
+        if(echo) {
+            String boss=preferences().getString(EchoFarmRules.BOSS_KEY,"");
+            task.addView(button(boss.isEmpty()?"设置目标首领":"目标："+boss,false,()->editEchoBoss(boss)));
+        }
         if(selected==AutomationTask.MULTI_DAILY||selected==AutomationTask.MULTI_REDEEM)task.addView(button("编辑账号计划（本机私有）",false,()->MultiAccountEditor.show(this)));
         if(redeem)task.addView(button("兑换码中心（获取/粘贴/启用/记录）",false,()->RedeemEditor.show(this)));
         space(task, 15); divider(task); space(task, 5); task.addView(modeRow());
@@ -182,13 +188,30 @@ public final class MainActivity extends Activity {
         accessibilityState = text("", 12, MUTED, false); captureState = text("", 12, MUTED, false);
         permissions.addView(accessibilityState); space(permissions, 10); permissions.addView(captureState); space(permissions, 15);
         permissions.addView(button("管理权限", false, () -> { preparation.cancel(); selectPage(2); }), new LinearLayout.LayoutParams(-1, d(46)));
-        space(permissions, 12); permissions.addView(text(redeem?"新抓取兑换码默认忽略\n主动启用后才执行兑换\n不购买、不删除、不消耗波片。":selected == AutomationTask.GARDEN
+        space(permissions, 12); permissions.addView(text(echo?"只吸收声骸，不领宝箱\n不切账号，不消耗波片\n读不到目标即停止。":redeem?"新抓取兑换码默认忽略\n主动启用后才执行兑换\n不购买、不删除、不消耗波片。":selected == AutomationTask.GARDEN
                 ? "前台运行 · 本地识别\n不切账号，不消耗波片。\n可选商店购买暂时跳过。"
                 : selected == AutomationTask.MULTI_DAILY ? "每号最多240普通波片\n不补充、不兑换、不购买\n未知账号/页面停止，保留断点。"
                 : "每账号/游戏日累计最多240普通波片\n不补充、不兑换备用、不购买\n保留消费账本，未核验结果不记完成。", 10, MUTED, false));
         LinearLayout.LayoutParams permissionParams = new LinearLayout.LayoutParams(0, -2, 1); permissionParams.leftMargin = d(14);
         columns.addView(permissions, permissionParams); content.addView(columns); space(content, 14); recentCard();
         space(content, 12); content.addView(text("每日仍在真机适配，不是可完整刷本的发布版本。切换任务不会自动开始。", 10, MUTED, false));
+    }
+
+    private void editEchoBoss(String boss) {
+        EditText input=new EditText(this);
+        input.setSingleLine();
+        input.setHint("血条上显示的完整名称");
+        input.setText(boss);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("设置目标首领").setView(input)
+                .setNegativeButton("取消",null).setPositiveButton("保存",null).show();
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
+            String name=input.getText().toString().trim();
+            try { new EchoFarmRules(name,null); }
+            catch(IllegalArgumentException error) { input.setError(error.getMessage()); return; }
+            preferences().edit().putString(EchoFarmRules.BOSS_KEY,name).apply();
+            dialog.dismiss();
+            selectPage(0);
+        });
     }
 
     private AutomationTask selectedTask() { return AutomationTask.restore(preferences().getString("task", "GARDEN")); }

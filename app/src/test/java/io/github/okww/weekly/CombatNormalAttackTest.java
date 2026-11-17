@@ -4,6 +4,24 @@ import org.junit.Test;
 import static org.junit.Assert.*;
 
 public class CombatNormalAttackTest {
+    @Test public void transientHudLossResumesOnlyWithSameCharacterAndFreshObservation() {
+        CombatNormalAttack attacks=new CombatNormalAttack();
+        attacks.request();attacks.observed(1000);attacks.suspend(1100);
+        attacks.observed(1500);
+        assertFalse(attacks.due(1600,true));
+        attacks.resume(1600,true);
+        assertTrue(attacks.due(1600,true));
+        attacks.suspend(1700);attacks.observed(1800);attacks.resume(1900,false);
+        assertFalse(attacks.due(1900,true));
+    }
+    @Test public void expiryAndExplicitStopNeverResurrectSuspendedAttack() {
+        CombatNormalAttack attacks=new CombatNormalAttack();
+        attacks.request();attacks.suspend(1000);attacks.observed(3501);attacks.resume(3501,true);
+        assertFalse(attacks.due(3501,true));
+        attacks.request();attacks.suspend(3600);attacks.stop();
+        attacks.observed(3700);attacks.resume(3700,true);
+        assertFalse(attacks.due(3700,true));
+    }
     @Test public void halfSecondOcrWaitKeepsOneHundredMsAttacksThenExpiresWithoutNewHud() {
         CombatNormalAttack attacks=new CombatNormalAttack();attacks.request();attacks.observed(1000);
         int count=0;

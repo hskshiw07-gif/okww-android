@@ -198,9 +198,11 @@ final class GardenEngine {
             for (String name : team) (BuiltinRotations.supported(name) ? translated : missing).put(name);
             state.put("rotation_control_flow_translated", translated);
             state.put("rotation_control_flow_missing", missing);
-            state.put("combat_execution_enabled", false);
+            state.put("combat_execution_enabled", automate
+                    && (action.scene.equals("daily-tacet-combat") || action.scene.equals("echo-fight")));
         }
         if (activeCharacter != null) state.put("last_observed_active_character", activeCharacter);
+        if (combat != null) state.put("active_character_confirmed_this_frame", combat.state != null);
         if (combat != null && combat.first != null && combat.second != null) {
             state.put("standby_avatar_1", new JSONObject().put("character", combat.first.character)
                     .put("score", combat.first.score).put("runner_up", combat.first.runnerUp));

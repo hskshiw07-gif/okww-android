@@ -13,7 +13,10 @@ final class CombatHud {
     final EnumMap<CombatTouchLayout.Control, Skill> skills = new EnumMap<>(CombatTouchLayout.Control.class);
     final boolean concertoFull, forteFull;
     CombatHud(PortraitMatcher.Pixels frame, GardenRules.Screen screen, int element) {
-        if (frame.width != 2400 || frame.height != 1080 || !tacetContinued(screen) || screen.automationPanelVisible())
+        this(frame, screen, element, tacetContinued(screen));
+    }
+    CombatHud(PortraitMatcher.Pixels frame, GardenRules.Screen screen, int element, boolean verifiedHud) {
+        if (frame.width != 2400 || frame.height != 1080 || !verifiedHud || screen.automationPanelVisible())
             throw new IllegalStateException("战斗HUD未核验，未读取技能就绪");
         CombatTouchLayout layout = CombatTouchLayout.forXiaomi13Pro();
         for (CombatTouchLayout.Control c : new CombatTouchLayout.Control[]{RESONANCE,LIBERATION,ECHO}) {
@@ -52,6 +55,15 @@ final class CombatHud {
     static boolean tacetCombat(GardenRules.Screen s) {
         return tacetActive(s) && objective(s) && timer(s);
     }
+    static boolean tacetReentry(GardenRules.Screen s) {
+        return anchors(s)&&timer(s)
+                &&s.hasOne("[0-9]{1,6}/[0-9]{3,6}",.46f,.91f,.535f,.955f)
+                &&s.text(.08f,.16f,.90f,.70f).matches("(?i).*(?:^|\\|)Lv[.]?[0-9]{1,3}(?:\\||$).*");
+    }
+    static boolean tacetVictoryBanner(GardenRules.Screen s) {
+        return s.aspect>2.18f&&s.aspect<2.26f&&!s.automationPanelVisible()
+                &&s.hasOne("挑战达成",.44f,.23f,.56f,.32f);
+    }
     // Only the already-entered combat Port uses this; initial entry still requires both arena anchors.
     static boolean tacetActive(GardenRules.Screen s) {
         return anchors(s) && (objective(s)||timer(s));
@@ -63,12 +75,13 @@ final class CombatHud {
     static boolean mobileStatus(GardenRules.Screen s) {
         // Dev111 read Lv.90 as Lい90. An unknown token also needs independent numeric HP and latency.
         return s.hasOne(".{1,6}",.55f,.90f,.61f,.96f)
-                && (s.hasOne("(?i)(?:[Lliwvuta]{1,2}[.]?|[.]|以)?[0-9]{1,3}",.55f,.90f,.61f,.96f)
+                && (s.hasOne("(?i)(?:[Lliwvuta]{1,2}[.]?|[.]|[|丨]?以)?[0-9]{1,3}",.55f,.90f,.61f,.96f)
                     || s.hasOne("[0-9]{1,6}/[0-9]{3,6}",.46f,.91f,.535f,.955f)
                     && s.hasOne(".{0,2}[0-9]{1,4}ms",.84f,.08f,.98f,.17f));
     }
     private static boolean anchors(GardenRules.Screen s) {
         return s.aspect>2.18f && s.aspect<2.26f && !s.automationPanelVisible() && AccountDailyConfig.detectUid(s)!=null
+                && !tacetVictoryBanner(s)
                 && mobileStatus(s)
                 && s.one("提示",.28f,.28f,.34f,.36f)==null
                 && !s.has("挑战成功|挑战失败|领取奖励|补充波片|复苏|复活");

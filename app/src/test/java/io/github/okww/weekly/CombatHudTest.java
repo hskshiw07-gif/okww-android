@@ -36,6 +36,38 @@ public class CombatHudTest {
         assertFalse(CombatHud.tacetActive(s));assertFalse(CombatHud.tacetCombat(s));
     }
     static Text px(String text,int l,int t,int r,int b){return new Text(text,l/2400f,t/1080f,r/2400f,b/1080f);}
+    /** 2026-11-16 second battle: countdown, enemy and HP visible, objective absent; UID sanitized. */
+    static Screen repeatBattleWithoutObjective(){
+        return new Screen(new ArrayList<>(Arrays.asList(
+                px("LV. 87",470,350,536,377),px("03:29:13",1160,140,1288,163),
+                px("令71mms",2169,117,2253,134),px("特征码: 000000000",2107,1051,2280,1069),
+                px("1732/16557",1143,1005,1247,1019),px("|以90",1363,1005,1421,1025))),
+                new int[3],2400f/1080);
+    }
+    @Test public void secondBattleReplayNeedsEnemyTimerUidAndHpWhenObjectiveIsAbsent(){
+        Screen s=repeatBattleWithoutObjective();
+        assertFalse(CombatHud.tacetCombat(s));assertTrue(CombatHud.tacetReentry(s));assertTrue(CombatHud.tacetActive(s));
+        for(int index:new int[]{0,1,3,4,5}) {
+            Screen missing=repeatBattleWithoutObjective();missing.words.remove(index);
+            assertFalse("missing anchor "+index,CombatHud.tacetReentry(missing));
+        }
+        s.words.add(t("领取奖励",.48f,.5f));assertFalse(CombatHud.tacetReentry(s));
+    }
+    @Test public void recordedVictoryBannerStopsCombatWithoutBecomingARewardOffer(){
+        Screen s=battle();
+        s.words.add(px("挑战达成",1099,267,1306,324));
+        assertTrue(CombatHud.tacetVictoryBanner(s));
+        assertFalse(CombatHud.tacetContinued(s));
+        assertFalse(CombatHud.tacetCombat(s));
+        assertNull(TacetTreasureNavigation.interaction(s));
+        assertFalse(DailyTacet.settlementPage(s));
+        Screen post=new Screen(new ArrayList<>(s.words),new int[3],2400f/1080);
+        post.words.remove(5);post.words.remove(4);
+        assertFalse(TacetTreasureNavigation.postWorld(post));
+        s.words.set(s.words.size()-1,t("挑战达成",.10f,.50f));
+        assertFalse(CombatHud.tacetVictoryBanner(s));
+        assertTrue(CombatHud.tacetCombat(s));
+    }
     @Test public void recordedForeignLevelGlyphNeedsIndependentHpLatencyAndUniqueLevelRegion() {
         Screen s=battle();s.words.set(1,px("Lい90",1371,1002,1416,1024));
         s.words.set(0,px("6482/15980",1139,1005,1247,1019));

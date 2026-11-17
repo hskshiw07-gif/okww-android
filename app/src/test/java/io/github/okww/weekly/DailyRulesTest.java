@@ -51,20 +51,29 @@ public class DailyRulesTest {
             assertEquals("daily-guide-boss-tab",rules.next(activity).scene);
         }
     }
-    @Test public void developmentDailyStillHonorsOrdinaryBalanceAndRealDailyLedger() throws Exception {
+    @Test public void insufficientOrdinaryBalanceOnlyArmsPreviewInDevelopment() throws Exception {
         for(boolean capped:new boolean[]{false,true}){
             DailyStaminaLedger ledger=ledger();
             if(capped)for(int balance=240;balance>=60;balance-=60){
                 ledger.reserve(balance,60,false,BUDGET_NOW);ledger.confirm(balance-60);
             }
             DailyTacet tacet=new DailyTacet();tacet.attachLedger(ledger);
-            DailyRules rules=new DailyRules(tacet,null,true);rules.teamConfirmed();
+            DailyRules rules=new DailyRules(tacet,null,false);rules.teamConfirmed();
             rules.observeUid(budgetBook(59));rules.observeUid(budgetBook(59));
             if(!capped)assertEquals("daily-stamina-plan-check",rules.next(budgetBook(59)).scene);
             assertEquals("daily-guide-first-tab",rules.next(budgetBook(59)).scene);
             assertTrue(rules.rewards.started());assertEquals(0,tacet.reserved());
             assertEquals(capped?240:0,tacet.dailySpent());
             assertNotEquals("daily-guide-boss-tab",rules.next(budgetActivity(100,false)).scene);
+
+            DailyTacet testTacet=new DailyTacet(true);testTacet.attachLedger(ledger);
+            DailyRules testRules=new DailyRules(testTacet,null,true);testRules.teamConfirmed();
+            assertEquals("daily-guide-boss-tab",testRules.next(budgetActivity(100,false)).scene);
+            testRules.observeUid(budgetBook(59));testRules.observeUid(budgetBook(59));
+            assertEquals("daily-stamina-plan-check",testRules.next(budgetBook(59)).scene);
+            testRules.next(budgetBook(59));
+            assertTrue(testTacet.previewOnly());assertEquals(0,testTacet.remainingPlan());
+            assertFalse(testRules.rewards.started());assertFalse(testRules.budgetComplete());
         }
     }
     @Test public void activity100Or110DoesNotSkipAnUnplannedExecutableBudget() throws Exception {

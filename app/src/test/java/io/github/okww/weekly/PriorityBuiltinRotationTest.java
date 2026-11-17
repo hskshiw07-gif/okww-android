@@ -205,6 +205,36 @@ public class PriorityBuiltinRotationTest {
         assertFalse(p.held);
     }
 
+    @Test public void hsinMissingR2YieldsRatherThanWaitingWholeFinisherWindow() throws Exception {
+        Port p = new Port("Hsin");
+        p.signals.put(HSIN_H2, q -> q.real < 60100);
+        long started=p.real;
+        new PriorityBuiltinRotation("Hsin").run(p);
+        assertEquals(1,p.heavyAttempts);
+        assertTrue(p.real-started<5000);
+        assertEquals("S",p.events.get(p.events.size()-1));
+        assertFalse(p.events.stream().anyMatch(e -> e.startsWith("R:") || e.startsWith("E:")));
+        assertFalse(p.held);
+    }
+
+    @Test public void hsinFrozenAnimationAllowsLateR2ButMissingR2StillHasWallBound() throws Exception {
+        for(boolean lateR2 : new boolean[]{true,false}) {
+            Port p = new Port("Hsin") {
+                @Override public boolean available(CombatTouchLayout.Control c) {
+                    if(c==LIBERATION&&lateR2&&real>=64500)allowLib=true;
+                    return super.available(c);
+                }
+            };
+            p.freeze=true;
+            p.signals.put(HSIN_H2,q -> q.real<60100);
+            long start=p.real;
+            new PriorityBuiltinRotation("Hsin").run(p);
+            assertTrue(p.real-start<8000);
+            assertEquals(lateR2,p.events.contains("L:-1:0:0"));
+            assertFalse(p.held);
+        }
+    }
+
     @Test public void hsinR1StartsFresh18SecondFinisherWindow() throws Exception {
         Port p = new Port("Hsin"); p.on(HSIN_LIB1); p.allowLib = true;
         new PriorityBuiltinRotation("Hsin").run(p);

@@ -185,7 +185,7 @@ public final class GameAccessibilityService extends AccessibilityService {
             AutomationTask requestedTask = selectedTask;
             long requestedGeneration = generation;
             AlertDialog dialog = new AlertDialog.Builder(this).setTitle("自动 · " + requestedTask.title)
-                    .setMessage(TestEnvironment.enabled(getSharedPreferences("weekly",MODE_PRIVATE))
+                    .setMessage(requestedTask!=AutomationTask.ECHO_FARM&&TestEnvironment.enabled(getSharedPreferences("weekly",MODE_PRIVATE))
                             ?requestedTask==AutomationTask.DAILY?TestEnvironment.DAILY_DESCRIPTION:requestedTask==AutomationTask.REDEEM?"测试环境 · 非开发请勿打开：每次重新获取公开码，并使用一条明确标记的合成测试码走完整设置、粘贴、提交、游戏结果和邮件流程。填码会覆盖系统剪贴板为当前合成码，不保存原内容；粘贴后两帧核对完整码才提交。测试码不代表奖励；真实记录保留，待核验仍阻止重试。不切号、不购买、不消耗波片。"
                             :"此任务尚未适配测试环境，自动执行将停止。请关闭测试环境后正常运行；不会清空真实波片或领奖记录。"
                             :requestedTask.confirmation)
@@ -265,6 +265,7 @@ public final class GameAccessibilityService extends AccessibilityService {
                 if (task == AutomationTask.REDEEM || task == AutomationTask.MULTI_REDEEM) new RedeemEngine(this,reader,task).run(inputAllowed);
                 else if (task == AutomationTask.MULTI_DAILY) new MultiAccountEngine(this, reader).run(inputAllowed);
                 else if (task == AutomationTask.DAILY) new DailyEngine(this, reader).run(inputAllowed);
+                else if (task == AutomationTask.ECHO_FARM) new EchoFarmEngine(this, reader).run(inputAllowed);
                 else new GardenEngine(this, reader).run(inputAllowed);
             } catch (InterruptedException error) {
                 Thread.currentThread().interrupt();

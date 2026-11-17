@@ -23,7 +23,7 @@ public class TestEnvironmentTest {
         SharedPreferences on=settings(Map.of(TestEnvironment.KEY,true)),off=settings(Map.of());
         for(AutomationTask task:AutomationTask.values()){
             TestEnvironment.requireSupported(off,true,task);TestEnvironment.requireSupported(on,false,task);
-            if(task==AutomationTask.REDEEM||task==AutomationTask.DAILY){
+            if(task==AutomationTask.REDEEM||task==AutomationTask.DAILY||task==AutomationTask.ECHO_FARM){
                 TestEnvironment.requireSupported(on,true,task);
                 assertEquals(task==AutomationTask.REDEEM,TestEnvironment.replay(on,task));
                 assertEquals(task==AutomationTask.DAILY,TestEnvironment.dailyReplay(on,task));

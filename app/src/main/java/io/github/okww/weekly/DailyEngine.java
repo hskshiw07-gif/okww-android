@@ -22,7 +22,7 @@ final class DailyEngine {
     private DailyResult execute(boolean automate,AccountDailyConfig.Profile account) throws Exception {
         String day=DailyStaminaLedger.gameDay(System.currentTimeMillis());
         boolean development=account==null&&TestEnvironment.dailyReplay(service.getSharedPreferences("weekly",0),AutomationTask.DAILY);
-        DailyRules policy = new DailyRules(new DailyTacet(),account,development);
+        DailyRules policy = new DailyRules(new DailyTacet(development),account,development);
         GardenRunGuard guard = new GardenRunGuard(SystemClock.elapsedRealtime());
         String previousScene = "";
         String inspectDescription = "";
@@ -121,13 +121,23 @@ final class DailyEngine {
                 MobileCombatReader.Observation combat = null;
                 if(policy.tacet.seekingTreasure())activeCharacter=null;
                 if (combatReader != null && !policy.tacet.seekingTreasure() && !action.scene.equals("daily-tacet-combat")
-                        && GardenRules.worldHud(screen)) {
+                        && (GardenRules.worldHud(screen)||treasure!=null&&policy.tacet.stage().equals("FIGHT"))) {
                     combat = healing != null ? healing : combatReader.read(bitmap, screen, capturedAt);
                     activeCharacter = combat.state == null ? null : team.get(combat.state.active);
                     // Opening menus needs a verified world HUD, not a combat-ready active character.
                     if (activeCharacter != null) action = new GardenRules.Action(action.kind, action.scene,
                             "当前上场：" + activeCharacter + "；" + action.description, action.x, action.y);
                 } else if (combatReader != null && !policy.tacet.seekingTreasure() && !action.scene.equals("daily-tacet-combat")) combatReader.read(bitmap, screen, capturedAt);
+                // A reward cue can return from combat before it has collected two post-combat frames.
+                if (policy.tacet.stage().equals("FIGHT")) {
+                    PortraitMatcher.Match verified=!policy.uidConflict()&&action.scene.equals("daily-tacet-loading")
+                            &&combat!=null&&combat.state!=null?treasure:null;
+                    if(policy.tacet.observeTreasure(screen,verified,capturedAt,SystemClock.elapsedRealtime())){
+                        activeCharacter=null;
+                        action=GardenRules.Action.waitFor("daily-tacet-treasure","已确认本轮宝箱，交给寻箱流程");
+                        android.util.Log.i("WWTreasure","owned treasure handed off after combat score="+verified.score);
+                    }
+                }
                 CombatGesture treasureStep = null;
                 if(automate&&policy.tacet.seekingTreasure()&&action.scene.equals("daily-tacet-treasure")) {
                     if(treasureNavigation==null)treasureNavigation=new TacetTreasureNavigation(policy.confirmedUid(),SystemClock.elapsedRealtime());
@@ -164,7 +174,7 @@ final class DailyEngine {
                 service.message((automate ? "自动·每日·" : "只读·每日·") + action.scene + "\n" + uidPrefix + action.description);
                 CaptureService capture = CaptureService.instance;
                 if (capture == null) throw new IllegalStateException("屏幕采集已结束");
-                if (action.scene.equals("daily-followup-finished")) {
+                if (action.scene.equals("daily-followup-finished")||action.scene.equals("daily-tacet-preview-finished")) {
                     inspectFrames = action.description.equals(inspectDescription) ? inspectFrames + 1 : 1;
                     inspectDescription = action.description;
                 } else { inspectFrames = 0; inspectDescription = ""; }
@@ -186,7 +196,8 @@ final class DailyEngine {
                 }
                 if(treasureStep!=null) {
                     if(SystemClock.elapsedRealtime()-capturedAt>1500)continue;
-                    android.util.Log.i("WWTreasure","step marker="+treasure.x+","+treasure.y+" score="+treasure.score);
+                    android.util.Log.i("WWTreasure",treasure==null?"camera pitch: marker not visible"
+                            :"step marker="+treasure.x+","+treasure.y+" score="+treasure.score);
                     service.performGesture(treasureStep);
                     continue;
                 }

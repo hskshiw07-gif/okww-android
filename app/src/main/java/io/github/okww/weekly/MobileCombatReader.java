@@ -67,9 +67,12 @@ final class MobileCombatReader {
         return java.util.concurrent.CompletableFuture.supplyAsync(()->match(image));
     }
     Observation observe(PortraitMatcher.Match[] pair,GardenRules.Screen screen,long capturedAt,boolean ownedTacet) {
+        return observeVerified(pair,capturedAt,gameHud(screen,ownedTacet));
+    }
+    Observation observeVerified(PortraitMatcher.Match[] pair,long capturedAt,boolean gameHud) {
         PortraitMatcher.Match first=pair==null?null:pair[0],second=pair==null?null:pair[1];
         return new Observation(active.observe(first, second, 2400, 1080, capturedAt,
-                SystemClock.elapsedRealtime(), gameHud(screen,ownedTacet)), first, second);
+                SystemClock.elapsedRealtime(), gameHud), first, second);
     }
     private static boolean gameHud(GardenRules.Screen screen,boolean ownedTacet) {
         // The owning combat Port separately requires arena anchors or its bounded recent-arena grace.

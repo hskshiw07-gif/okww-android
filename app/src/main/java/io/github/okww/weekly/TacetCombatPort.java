@@ -31,6 +31,8 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     private final GameAccessibilityService service;
     private final ScreenReader reader;
     private final DailyRules policy;
+    private final EchoFarmRules echo;
+    private final AutomationTask task;
     private final List<String> names;
     private final MobileCombatReader identities;
     private final MobileSkillFeatures features;
@@ -56,17 +58,24 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     private boolean liberationHoldReady;
     private boolean held,holdDesired;
     private CombatTouchLayout.Control heldControl=ATTACK;
-    private int treasureFrames;
-    private long lastTreasureFrame=-1;
     // Device dev81: OCR lost both arena labels for one switch; only a recent full arena frame may extend HUD trust.
     static final long ARENA_LABEL_GRACE_MS=8000;
     private long lastArenaFrame=-1;
+    private long echoQuietAt=-1;
     private boolean combatFrame;
     private static final long OBSERVATION_INTERVAL_MS=250;
     private HiyukiHud.Phase hiyukiPhase=HiyukiHud.Phase.UNKNOWN;
 
     TacetCombatPort(GameAccessibilityService service,ScreenReader reader,DailyRules policy,List<String> names) throws Exception {
-        this.service=service;this.reader=reader;this.policy=policy;this.names=names;
+        this(service,reader,policy,null,names);
+    }
+    TacetCombatPort(GameAccessibilityService service,ScreenReader reader,EchoFarmRules echo,List<String> names) throws Exception {
+        this(service,reader,null,echo,names);
+    }
+    private TacetCombatPort(GameAccessibilityService service,ScreenReader reader,DailyRules policy,EchoFarmRules echo,
+                            List<String> names) throws Exception {
+        this.service=service;this.reader=reader;this.policy=policy;this.echo=echo;this.names=names;
+        task=echo==null?AutomationTask.DAILY:AutomationTask.ECHO_FARM;
         for(String name:names) {
             if(!wired(name))throw new IllegalStateException("该队伍还缺手机战斗状态标定："+name+"；未回退通用连点");
             if(!missingCalibration(name).isEmpty())throw new IllegalStateException(name+" 已接执行接口，仍缺 "+missingCalibration(name));
@@ -75,7 +84,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         try(InputStreamReader input=new InputStreamReader(service.getAssets().open("builtin-combat.tsv"),StandardCharsets.UTF_8)){catalog=new BuiltinCombatCatalog(input);}
         rotations=new BuiltinRotations(catalog,names);
         team=new CombatTeam(catalog,names);identities=new MobileCombatReader(service.getAssets(),names);features=new MobileSkillFeatures(service.getAssets());
-        treasures=new MobileTreasureReader(service.getAssets());
+        treasures=echo==null?new MobileTreasureReader(service.getAssets()):null;
         service.combatCapture(true);
     }
     void round() throws Exception {
@@ -87,7 +96,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         catch(Exception failure) {
             if(pixels!=null&&observedSnapshot!=null)try {
                 Bitmap observed=Bitmap.createBitmap(pixels.argb,pixels.width,pixels.height,Bitmap.Config.ARGB_8888);
-                try {GardenEngine.saveFailure(service,"daily-combat",observed,observedSnapshot,observedRequestedAt,failure);}
+                try {GardenEngine.saveFailure(service,echo==null?"daily-combat":"echo-combat",observed,observedSnapshot,observedRequestedAt,failure);}
                 finally {observed.recycle();}
             }catch(Exception evidenceFailure){failure.addSuppressed(evidenceFailure);}
             throw failure;
@@ -107,26 +116,45 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
             avatars=identities.matchAsync(currentPixels);
             ScreenReader.Snapshot snapshot=reader.combat(frame,this::continueNormalAttack);long ocrEnded=realTimeMs();screen=GardenEngine.toScreen(snapshot,frame);
             if(screen.automationPanelVisible())throw new IllegalStateException("战斗帧含浮窗，未发送输入");
-            policy.observeUid(screen);
-            if(screen.has("挑战成功|挑战失败|领取奖励|复苏|复活|补充波片|兑换波片"))throw new Ended();
-            boolean postWorld=TacetTreasureNavigation.postWorld(screen);
-            boolean arena=CombatHud.tacetActive(screen);
-            boolean grace=!arena&&lastArenaFrame>=0&&capturedAt-lastArenaFrame<=ARENA_LABEL_GRACE_MS&&CombatHud.tacetContinued(screen);
-            MobileCombatReader.Observation observed=identities.observe(avatars.get(),screen,capturedAt,!postWorld);identity=observed.state;
+            if(echo==null) {
+                policy.observeUid(screen);
+                if(CombatHud.tacetVictoryBanner(screen)&&!policy.uidConflict()&&policy.confirmedUid()!=null
+                        &&policy.confirmedUid().equals(AccountDailyConfig.detectUid(screen))&&realTimeMs()-capturedAt<=1500){
+                    android.util.Log.i("WWCombat","tacet victory banner; release combat and reobserve reward UI");
+                    throw new Ended();
+                }
+                if(screen.has("挑战成功|挑战失败|领取奖励|复苏|复活|补充波片|兑换波片"))throw new Ended();
+            } else {
+                if(uidConflict() || EchoFarmRules.blocked(screen))
+                    throw new IllegalStateException("刷4C战斗遇到未知账号或阻塞弹窗，未点击");
+            }
+            boolean postWorld=echo==null&&TacetTreasureNavigation.postWorld(screen);
+            boolean echoHud=echo!=null&&echo.hud(screen)&&ocrEnded-capturedAt<=1500;
+            boolean bossLabel=echoHud&&echo.bossLabel(screen);
+            boolean bossBar=echoHud&&EchoFarmRules.healthBar(currentPixels);
+            boolean arena=echo==null?CombatHud.tacetActive(screen):bossLabel&&bossBar;
+            boolean grace=!arena&&lastArenaFrame>=0&&capturedAt-lastArenaFrame<=ARENA_LABEL_GRACE_MS
+                    &&(echo==null?CombatHud.tacetContinued(screen):bossLabel);
+            if(echo!=null) {
+                if(echoHud&&!bossLabel&&!bossBar) {
+                    if(echoQuietAt<0)echoQuietAt=capturedAt;
+                    if(echo.prompt(screen)!=null || capturedAt-echoQuietAt>=2000)throw new Ended();
+                } else echoQuietAt=-1;
+            }
+            MobileCombatReader.Observation observed=echo==null
+                    ?identities.observe(avatars.get(),screen,capturedAt,!postWorld)
+                    :identities.observeVerified(avatars.get(),capturedAt,arena||grace);
+            identity=observed.state;
             pixels=currentPixels;
             observedSnapshot=snapshot;observedRequestedAt=captureStarted;
             PortraitMatcher.Match marker=postWorld&&!grace&&identity!=null&&!policy.uidConflict()?treasures.find(pixels):null;
-            if(marker!=null&&realTimeMs()-capturedAt<=1500&&capturedAt>lastTreasureFrame) {
-                treasureFrames=lastTreasureFrame>=0&&capturedAt-lastTreasureFrame<=2500?treasureFrames+1:1;
-                lastTreasureFrame=capturedAt;
-                if(treasureFrames>=2) {
-                    policy.tacet.treasureConfirmed(AccountDailyConfig.detectUid(screen));
-                    CaptureService.instance.saveEvidence(frame,"daily-treasure");
-                    android.util.Log.i("WWCombat","owned treasure handoff score="+marker.score+" xy="+marker.x+","+marker.y);
-                    throw new Ended();
-                }
-            } else {treasureFrames=0;lastTreasureFrame=-1;}
-            hud=!policy.uidConflict() && identity!=null && (arena||grace) ? new CombatHud(pixels,screen,team.chars.get(identity.active).element):null;
+            if(echo==null&&policy.tacet.observeTreasure(screen,marker,capturedAt,realTimeMs())) {
+                CaptureService.instance.saveEvidence(frame,"daily-treasure");
+                android.util.Log.i("WWCombat","owned treasure handoff score="+marker.score+" xy="+marker.x+","+marker.y);
+                throw new Ended();
+            }
+            hud=!uidConflict() && identity!=null && (arena||grace)
+                    ? new CombatHud(pixels,screen,team.chars.get(identity.active).element,echo!=null||CombatHud.tacetContinued(screen)):null;
             readAt=realTimeMs();if(readAt-capturedAt>1500){identity=null;hud=null;}
             // Starting OCR is not a new verified observation; only a fully accepted result renews normal input.
             if(hud!=null)normalAttack.observed(capturedAt);
@@ -136,10 +164,10 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
             hiyukiPhase=phase;
             if(hud!=null&&arena)lastArenaFrame=capturedAt;
             combatFrame=hud!=null;
-            if(hud!=null&&grace)android.util.Log.i("WWCombat","arena labels unread; HP-line continuation "+(capturedAt-lastArenaFrame)+"ms after full arena frame");
+            if(echo==null&&hud!=null&&grace)android.util.Log.i("WWCombat","arena labels unread; HP-line continuation "+(capturedAt-lastArenaFrame)+"ms after full arena frame");
             clock.observe(capturedAt,hud==null,identity!=null);featureCache.clear();
             // Intro/liberation animations hide HUD and freeze the active clock; they do not erase outro buffs.
-            if(clock.observationGap()||policy.uidConflict())team.forgetBuffTiming();
+            if(clock.observationGap()||uidConflict())team.forgetBuffTiming();
             held=service.heldActive();
             if (hud != null) {
                 if(holdDesired&&heldControl==LIBERATION&&hud.skills.get(LIBERATION)==CombatHud.Skill.READY)
@@ -149,15 +177,13 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
                     service.holdControl(heldControl,true,layout);held=true;
                 }
             } else {
-                normalAttack.stop();
+                normalAttack.suspend(realTimeMs());
                 if(held){android.util.Log.i("WWTouch","suspend hold: HUD/identity lost");service.holdAttack(false,layout);held=false;}
             }
-            GardenRules.Action action=GardenRules.Action.waitFor("daily-tacet-combat",hud==null?"等待战斗HUD/在场身份恢复":
+            GardenRules.Action action=GardenRules.Action.waitFor(echo==null?"daily-tacet-combat":"echo-fight",hud==null?"等待战斗HUD/在场身份恢复":
                     names.get(identity.active)+" "+hud.skills+"，协奏="+hud.concertoFull+"，回路="+hud.forteFull);
-            org.json.JSONObject state=GardenEngine.persist(service,AutomationTask.DAILY,snapshot,action,true,readAt-capturedAt,names,
+            GardenEngine.persist(service,task,snapshot,action,true,readAt-capturedAt,names,
                     identity==null?null:names.get(identity.active),observed,policy);
-            state.put("combat_execution_enabled",true);state.put("active_character_confirmed_this_frame",identity!=null);
-            GardenEngine.writeState(service,AutomationTask.DAILY.stateFile,state);
             android.util.Log.d("WWCombatTiming","capture="+(capturedAt-captureStarted)+" ocr="+(ocrEnded-capturedAt)
                     +" identity="+(readAt-ocrEnded)+" persist="+(realTimeMs()-readAt));
         } finally {if(avatars!=null)avatars.cancel(true);frame.recycle();}
@@ -171,6 +197,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
                 if(expected!=null&&!expected.equals(names.get(identity.active))){
                     boolean dead=expectedDead();
                     if(dead&&fallenCandidate==identity.active){
+                            if(echo!=null)throw new IllegalStateException("刷4C已有队员倒下，停止");
                             policy.tacet.confirmedPartyDeath(AccountDailyConfig.detectUid(screen));
                             android.util.Log.i("WWCombat","confirmed fallen "+expected+"; handing off to exit/heal recovery");
                             throw new Ended();
@@ -181,11 +208,18 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
                     if(realTimeMs()<end){Thread.sleep(60);refresh();continue;}
                     throw new IllegalStateException("战斗在场身份发生未确认变化，停止而非按旧角色输出");
                 }
+                normalAttack.resume(realTimeMs(),expected!=null&&expected.equals(names.get(identity.active)));
                 return;
             }
-            if(realTimeMs()>end)throw new IllegalStateException("无音区战斗状态或在场角色连续5秒未确认");
+            if(realTimeMs()>end)throw new IllegalStateException((echo==null?"无音区":"刷4C")+"战斗状态或在场角色连续5秒未确认");
             Thread.sleep(60);refresh();
         }
+    }
+    private String confirmedUid() { return echo==null?policy.confirmedUid():echo.uid; }
+    private boolean uidConflict() {
+        if(echo==null)return policy.uidConflict();
+        String seen=AccountDailyConfig.detectUid(screen);
+        return seen!=null&&!echo.uid.equals(seen);
     }
     private boolean expectedDead(){
         if(identity==null||expected==null)return false;
@@ -244,7 +278,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
     private void continueNormalAttack() throws Exception {
         if(Thread.currentThread().isInterrupted())throw new InterruptedException();
         long now=realTimeMs();
-        boolean permitted=hud!=null&&identity!=null&&expected!=null&&!policy.uidConflict()&&!holdDesired
+        boolean permitted=hud!=null&&identity!=null&&expected!=null&&!uidConflict()&&!holdDesired
                 &&expected.equals(names.get(identity.active));
         if(!normalAttack.due(now,permitted))return;
         service.performGesture(layout.press(ATTACK,65,2400,1080));normalAttack.sent(now);
@@ -332,6 +366,7 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
             }
             case LONG_ACTION, LONG_ACTION_2 -> {
                 requireActiveCharacter("Hiyuki");
+                if(!features.priority.actionIndicator(pixels))yield false;
                 HiyukiHud.Phase phase=requireHiyukiPhase();
                 yield features.priority.actionIndicator(pixels)&&(value==PriorityBuiltinRotation.Signal.LONG_ACTION_2)
                         ==(phase==HiyukiHud.Phase.LIBERATED);
@@ -508,8 +543,13 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         return featureCache.get(feature);
     }
     @Override public boolean longAction() throws Exception {
-        checkCombat();
-        if(features.normalTargetIndicator(pixels))return false;
+        normalAttack.stop();
+        long deadline=realTimeMs()+2000;
+        do {
+            checkCombat();
+            if(features.normalTargetIndicator(pixels))return false;
+            pause(100);
+        } while(realTimeMs()<deadline);
         throw new IllegalStateException("变形/长动作标记未确认，保留战斗现场，不用墙钟假定动作结束");
     }
     @Override public boolean breakAction() throws Exception {
@@ -518,7 +558,10 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         normalAttack.stop();service.tap(text.x()*2400,text.y()*1080,2400,1080);refresh();return true;
     }
     @Override public void cycleSleep(long started) throws Exception {if(!breakAction())pause(Math.max(0,100-(realTimeMs()-started)));}
-    @Override public boolean partyHudVisible() throws Exception {refresh();return hud!=null;}
+    @Override public boolean partyHudVisible() throws Exception {
+        if(readAt<0||realTimeMs()-readAt>OBSERVATION_INTERVAL_MS||realTimeMs()-capturedAt>1200)refresh();
+        return hud!=null;
+    }
     @Override public void waitPartyHud(long timeoutMs) throws Exception {
         long end=realTimeMs()+timeoutMs;do {refresh();if(hud!=null)return;}while(realTimeMs()<end);
         throw new IllegalStateException("等待技能动画后HUD恢复超时");
@@ -532,13 +575,13 @@ final class TacetCombatPort implements PriorityBuiltinRotation.Port, AutoCloseab
         checkCombat();int source=identity.active;boolean con=hud.concertoFull;
         int target=team.choose(source,con,rotations.priorities(names.get(source),con,activeTimeMs()),activeTimeMs());
         if(source==target)return;
-        String uid=policy.confirmedUid();
+        String uid=confirmedUid();
         if(uid==null)throw new IllegalStateException("切人账号尚未确认");
         CombatSwitch switching=new CombatSwitch(source,target,started);
         while(true) {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException();
             long now=realTimeMs();
-            boolean sameUid=!policy.uidConflict()&&uid.equals(AccountDailyConfig.detectUid(screen));
+            boolean sameUid=!uidConflict()&&uid.equals(AccountDailyConfig.detectUid(screen));
             android.util.Log.d("WWCombat","switch observed source="+names.get(source)+" target="+names.get(target)
                     +" attempts="+switching.attempts()+" active="+(identity==null?"unknown":names.get(identity.active))
                     +" hud="+(hud!=null)+" sameUid="+sameUid+" frameAge="+(now-capturedAt));

@@ -56,7 +56,7 @@ final class DailyRules {
     String confirmedUid() { return confirmedUid; }
     boolean uidConflict() { return uidConflict; }
     boolean budgetComplete() {
-        return tacet != null && tacet.hasLedger() && tacet.reserved() == 0
+        return tacet != null && tacet.hasLedger() && tacet.reserved() == 0 && !tacet.previewOnly()
                 && (tacet.dailySpent() >= DailyStaminaBudget.LIMIT
                     || tacet.plan() != null && (batchProfile!=null||tacet.dailySpent() >= 180) && tacet.remainingPlan() == 0);
     }
@@ -120,7 +120,8 @@ final class DailyRules {
         }
         if(tacet!=null&&!tacet.hasLedger()&&DailyTacet.settlementPage(screen))
             return Action.waitFor("daily-settlement-ledger-wait","先核验结算页账号与已有账本，不重试或重新领取");
-        Action preparation=batchProfile==null?reservePreparation.next(screen,confirmedUid,teamVerified,resourceCaptured,resourceTime):null;
+        Action preparation=batchProfile==null&&(tacet==null||!tacet.previewOnly())
+                ?reservePreparation.next(screen,confirmedUid,teamVerified,resourceCaptured,resourceTime):null;
         if(preparation!=null)return preparation;
         if(!teamVerified&&screen.has("复苏|复活|使用药品|购买药品|购买复苏"))
             return Action.stop("复苏界面未归属本轮已核验队伍，未使用任何恢复道具");
@@ -144,12 +145,14 @@ final class DailyRules {
             if (leave != null) return Action.tap("daily-unowned-failure-exit", leave);
         }
         if (tacet != null && screen.aspect > 2.18f && screen.aspect < 2.26f) {
-            Action combat = tacet.next(screen,partyFullyHealed);
+            Action combat = tacet.next(screen,partyFullyHealed,resourceCaptured,resourceTime);
             if(tacet.consumeRecovered()){
                 teamVerified=teamPageDeparted=tacetSelected=travelSubmitted=targetLocked=false;
                 followupReason="";
             }
             if (combat != null) return combat;
+            if (tacet.finished()&&tacet.previewOnly())
+                return Action.waitFor("daily-tacet-preview-finished",tacet.reason());
             if (tacet.finished()) { rewards.start(); followupReason = tacet.reason(); }
         }
         if(screen.has("复苏|复活|使用药品|购买药品|购买复苏"))return Action.stop("复苏界面未归属本轮战斗，未使用任何恢复道具");
@@ -228,7 +231,7 @@ final class DailyRules {
                     : Action.waitFor("daily-team", "正在读取编队名称，等待两个新鲜画面一致");
         }
         if (teamVerified && activity) {
-            if(ignoreActivity&&!rewards.started()&&tacet!=null&&!tacet.exhausted())
+            if(ignoreActivity&&!rewards.started()&&tacet!=null)
                 return new Action(Kind.TAP,"daily-guide-boss-tab","每日测试：忽略活跃度，进入素材获取继续无音区副本；仍核验普通波片额度",148f/2400,326f/1080);
             Integer points = activityPoints(screen);
             if (points == null)
@@ -253,7 +256,7 @@ final class DailyRules {
             if (confirmedUid == null) return Action.waitFor("daily-account-wait", "账号标记尚未连续核验，不用默认无音区代替账号配置");
             if (tacet != null) {
                 if (!tacet.hasLedger()) return Action.waitFor("daily-stamina-ledger-wait", "等待本轮已核验账号的波片账本，不在缺少预算时进场");
-                if (tacet.exhausted()) {
+                if(tacet.exhausted()&&!tacet.previewOnly()&&!tacet.needsPreview(stamina)) {
                     followupReason = "本轮计划或本游戏日波片额度已用完，继续免费奖励检查";
                     rewards.start();
                     return new Action(Kind.TAP, "daily-guide-first-tab", followupReason, .062f, .175f);
@@ -268,7 +271,7 @@ final class DailyRules {
                         return Action.waitFor("daily-stamina-plan-check", "再次确认同账号当前普通波片余额，再冻结本轮额度");
                     tacet.freezeOrdinaryPlan(stamina);
                 }
-                if(tacet.exhausted()){
+                if(tacet.exhausted()&&!tacet.previewOnly()){
                     followupReason="普通波片不足60或本日额度已用完，继续免费检查；未补充或兑换";
                     rewards.start();return new Action(Kind.TAP,"daily-guide-first-tab",followupReason,.062f,.175f);
                 }

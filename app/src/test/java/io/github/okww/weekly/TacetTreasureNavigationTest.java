@@ -70,6 +70,25 @@ public class TacetTreasureNavigationTest {
         s.words.add(t("领取奖励",1613f/2400,459f/1080));
         assertNull(n.next(s,marker(.523f,.65f),true,5300,5400));
     }
+    @Test public void recordedTwelveMetreApproachKeepsMovingForwardThroughSmallHorizontalDrift() throws Exception {
+        TacetTreasureNavigation n=new TacetTreasureNavigation("000000000",0);Screen s=world();
+        // 10:10:35–10:11:02: the old navigator switched back to strafing at x=.458 and timed out 12m away.
+        float[] xs={.43354166f,.46354166f,.469375f,.46604165f,.461875f,.45770833f,.49979165f,.5027083f,.41f};
+        for(int i=0;i<xs.length;i++) {
+            var m=marker(xs[i],.48f);
+            assertNull(n.next(s,m,true,i*1000+100,i*1000+200));
+            var step=n.next(s,m,true,i*1000+300,i*1000+400);
+            var p=step.contacts.get(0);
+            boolean forward=i>0&&i<xs.length-1;
+            assertEquals(forward?900:650,step.durationMs);
+            assertEquals(forward?-100f/1080:0,p.endY-p.y,1e-6f);
+            if(!forward)assertEquals(-100f/2400,p.endX-p.x,1e-6f);
+            else if(i==5)assertTrue(p.endX<p.x);
+        }
+        s.words.add(t("领取奖励",1613f/2400,459f/1080));
+        assertNotNull(TacetTreasureNavigation.interaction(s));
+        assertNull(n.next(s,marker(.5f,.48f),true,10000,10100));
+    }
     @Test public void observedPostCombatLevelGlyphNeedsExactRoiAndOwnedNewMarkers() throws Exception {
         Screen s=world();s.words.set(0,t("以90",.58f,.94f));
         assertFalse(GardenRules.worldHud(s));assertTrue(TacetTreasureNavigation.postWorld(s));

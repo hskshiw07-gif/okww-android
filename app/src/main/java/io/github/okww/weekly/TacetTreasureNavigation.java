@@ -8,6 +8,7 @@ final class TacetTreasureNavigation {
     private PortraitMatcher.Match candidate;
     private int missingFrames,pitchSearches;
     private int steps;
+    private boolean aligned;
 
     TacetTreasureNavigation(String uid,long now) {
         if(uid==null||!uid.matches("[0-9]{9}")||now<0)throw new IllegalArgumentException("寻箱需要已核验账号和时钟");
@@ -21,12 +22,13 @@ final class TacetTreasureNavigation {
     }
     private static boolean postCombatHud(GardenRules.Screen s) {
         return s.aspect>2.18f&&s.aspect<2.26f&&AccountDailyConfig.detectUid(s)!=null&&!s.automationPanelVisible()
+                &&!CombatHud.tacetVictoryBanner(s)
                 &&CombatHud.mobileStatus(s)
                 &&s.one(".*清理无.*区.*",.02f,.16f,.40f,.42f)==null
                 &&s.one("[^0-9]{0,2}[0-9]{2}:[0-9]{2}:[0-9]{2}",.42f,.08f,.59f,.18f)==null
                 &&!s.has("提示|确认|取消|挑战成功|挑战失败|补充波片|兑换|购买|复苏|复活|暂停|教程");
     }
-    void unconfirmedFrame(){candidate=null;missingFrames=0;}
+    void unconfirmedFrame(){candidate=null;missingFrames=0;aligned=false;}
     CombatGesture next(GardenRules.Screen screen,PortraitMatcher.Match marker,boolean ownedTreasure,
                        long captured,long now) throws InterruptedException {
         if(Thread.currentThread().isInterrupted())throw new InterruptedException();
@@ -42,7 +44,7 @@ final class TacetTreasureNavigation {
             // Hiyuki's ending camera can point at the ground and put the marker below the HUD.
             // Only the owned post-combat phase may try two camera-only pitch corrections; never walk blind.
             if(missingFrames<2||pitchSearches>=2)return null;
-            missingFrames=0;pitchSearches++;steps++;
+            missingFrames=0;pitchSearches++;steps++;aligned=false;
             return new CombatGesture(2400,1080,new CombatGesture.Contact(1500f/2400,600f/1080,
                     1500f/2400,450f/1080,0,300));
         }
@@ -54,20 +56,23 @@ final class TacetTreasureNavigation {
         // screen position circles the arena; first turn the camera, then reobserve the actual target.
         // Measured on this layout: a left 150px camera drag brought the left-edge marker into view.
         if(marker.x<.25f||marker.x>.75f||marker.y>.75f) {
+            aligned=false;
             // Bottom-clamped down-chevron means the reward is behind us, even with centered X.
             // Measured 450px left drag brings that rear marker into view.
             float turn=marker.y>.75f?-450:marker.x<.5f?-150:150;
             return new CombatGesture(2400,1080,new CombatGesture.Contact(1500f/2400,600f/1080,
                     (1500+turn)/2400,600f/1080,0,marker.y>.75f?450:300));
         }
-        float dx=0,dy=0;
-        if(Math.abs(marker.x-.5f)>.04f)dx=marker.x>.5f?100:-100;
+        float offset=marker.x-.5f;
+        // Like PC, require tight initial centering but don't return to pure strafing for small drift.
+        aligned=Math.abs(offset)<=(aligned?.07f:.04f);
+        float dx=aligned?(Math.abs(offset)>.04f?offset*500:0):Math.copySign(100,offset);
         // Screen Y depends on mobile camera pitch, not whether we have passed the treasure.
         // Dev113 reached 6m then oscillated at Y=.55; keep approaching the aligned marker
         // until the separately verified interaction replaces it.
-        else dy=-100;
+        float dy=aligned?-100:0;
         // shortcut: neutral joystick (375,808) is measured on Xiaomi 2400x1080; other controls need calibration.
         return new CombatGesture(2400,1080,new CombatGesture.Contact(375f/2400,808f/1080,
-                (375+dx)/2400,(808+dy)/1080,0,650));
+                (375+dx)/2400,(808+dy)/1080,0,aligned?900:650));
     }
 }

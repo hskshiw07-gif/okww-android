@@ -43,6 +43,8 @@ final class PriorityBuiltinRotation {
     private boolean resReady, specialPhrolova;
     private long finisherStart;
     private boolean h2Completed, lib2Cast;
+    private long h2CompletedAt;
+    private long h2CompletedActiveAt;
     private int kendoCount;
 
     PriorityBuiltinRotation(String character) {
@@ -154,6 +156,9 @@ final class PriorityBuiltinRotation {
             check(p); long cycle = p.realTimeMs();
             if (h2Completed) {
                 if (hsinLib(p, true)) return;
+                // Do not hold the field for the entire finisher window when R2 never becomes available.
+                if (elapsed(p.activeTimeMs(), h2CompletedActiveAt) >= 3000
+                        || elapsed(p.realTimeMs(), h2CompletedAt) >= 6000) return;
                 cycle(p, cycle); continue;
             }
             if (signal(p, Signal.HSIN_LIB2)) {
@@ -193,7 +198,9 @@ final class PriorityBuiltinRotation {
     }
     private boolean hsinHeavy(Port p, int type) throws Exception {
         boolean released = releaseHeavy(p, Signal.HSIN_H1, Signal.HSIN_H2, 1200, 250, false);
-        if (released && type == 2) h2Completed = true;
+        if (released && type == 2) {
+            h2Completed = true; h2CompletedAt = p.realTimeMs(); h2CompletedActiveAt = p.activeTimeMs();
+        }
         return released;
     }
     private void hsinEnhancedE(Port p) throws Exception {
